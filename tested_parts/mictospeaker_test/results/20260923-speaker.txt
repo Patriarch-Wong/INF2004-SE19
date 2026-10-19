@@ -1,0 +1,28 @@
+# speaker | SPEAKER_PORT | 115200 baud | 60 second capture
+2026-09-23T17:14:32.584+08:00 ESP-ROM:esp32s3-20210327
+2026-09-23T17:14:32.584+08:00 Build:Mar 27 2021
+2026-09-23T17:14:32.584+08:00 rst:0x1 (POWERON),boot:0x28 (SPI_FAST_FLASH_BOOT)
+2026-09-23T17:14:32.584+08:00 SPIWP:0xee
+2026-09-23T17:14:32.584+08:00 mode:DIO, clock div:1
+2026-09-23T17:14:32.584+08:00 load:0x3fce3808,len:0x4bc
+2026-09-23T17:14:32.584+08:00 load:0x403c9700,len:0xbd8
+2026-09-23T17:14:32.584+08:00 load:0x403cc700,len:0x2a0c
+2026-09-23T17:14:32.584+08:00 entry 0x403c98d0
+2026-09-23T17:14:32.740+08:00 
+2026-09-23T17:14:32.740+08:00 ESP-NOW Microphone to Speaker | SPEAKER RECEIVER | 16000 Hz mono
+2026-09-23T17:14:32.740+08:00 Chip: ESP32-S3 | flash: 16777216 | PSRAM: 8386279
+2026-09-23T17:14:32.795+08:00 Station MAC: E0:72:A1:D7:F6:50 | channel: 6
+2026-09-23T17:14:32.795+08:00 Speaker: PDM GPIO 7, gain 15%, playback=48000 Hz, radio=16000 Hz. Waiting for microphone.
+2026-09-23T17:14:32.795+08:00 Radio: AUD2 ADPCM, 20 ms / 180 bytes. Both boards require AUD2 firmware.
+2026-09-23T17:14:32.795+08:00 Commands: t = local 500 Hz tone, s = digital silence, m = PDM off / GPIO low, a = live audio (press Enter).
+2026-09-23T17:14:37.582+08:00 RX packets=220 missing=18 stale=0 queue-drop=0 underruns=9 concealed=11 I2S-errors=0 buffered=1
+2026-09-23T17:14:42.620+08:00 RX packets=451 missing=39 stale=0 queue-drop=0 underruns=20 concealed=24 I2S-errors=0 buffered=1
+2026-09-23T17:14:47.622+08:00 RX packets=688 missing=51 stale=0 queue-drop=0 underruns=31 concealed=29 I2S-errors=0 buffered=2
+2026-09-23T17:14:52.618+08:00 RX packets=921 missing=69 stale=0 queue-drop=0 underruns=40 concealed=45 I2S-errors=0 buffered=2
+2026-09-23T17:14:57.657+08:00 RX packets=1154 missing=87 stale=0 queue-drop=0 underruns=49 concealed=56 I2S-errors=0 buffered=2
+2026-09-23T17:15:02.657+08:00 RX packets=1396 missing=96 stale=0 queue-drop=0 underruns=59 concealed=61 I2S-errors=0 buffered=1
+2026-09-23T17:15:07.651+08:00 RX packets=1634 missing=107 stale=0 queue-drop=0 underruns=70 concealed=69 I2S-errors=0 buffered=2
+2026-09-23T17:15:12.655+08:00 RX packets=1876 missing=117 stale=0 queue-drop=0 underruns=79 concealed=77 I2S-errors=0 buffered=1
+2026-09-23T17:15:17.719+08:00 RX packets=2121 missing=122 stale=0 queue-drop=0 underruns=89 concealed=80 I2S-errors=0 buffered=2
+2026-09-23T17:15:22.715+08:00 RX packets=2363 missing=131 stale=0 queue-drop=0 underruns=99 concealed=86 I2S-errors=0 buffered=2
+2026-09-23T17:15:27.717+08:00 RX packets=2599 missing=146 stale=0 queue-drop=0 underruns=108 concealed=98 I2S-errors=0 buffered=2

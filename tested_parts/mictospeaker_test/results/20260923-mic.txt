@@ -1,0 +1,27 @@
+# mic | MIC_PORT | 115200 baud | 60 second capture
+2026-09-23T17:14:32.584+08:00 ESP-ROM:esp32s3-20210327
+2026-09-23T17:14:32.584+08:00 Build:Mar 27 2021
+2026-09-23T17:14:32.584+08:00 rst:0x1 (POWERON),boot:0x2a (SPI_FAST_FLASH_BOOT)
+2026-09-23T17:14:32.584+08:00 SPIWP:0xee
+2026-09-23T17:14:32.584+08:00 mode:DIO, clock div:1
+2026-09-23T17:14:32.584+08:00 load:0x3fce3808,len:0x4bc
+2026-09-23T17:14:32.584+08:00 load:0x403c9700,len:0xbd8
+2026-09-23T17:14:32.584+08:00 load:0x403cc700,len:0x2a0c
+2026-09-23T17:14:32.584+08:00 entry 0x403c98d0
+2026-09-23T17:14:32.739+08:00 
+2026-09-23T17:14:32.740+08:00 ESP-NOW Microphone to Speaker | MIC TRANSMITTER | 16000 Hz mono
+2026-09-23T17:14:32.740+08:00 Chip: ESP32-S3 | flash: 16777216 | PSRAM: 8386279
+2026-09-23T17:14:32.795+08:00 Station MAC: E0:72:A1:D8:0C:30 | channel: 6
+2026-09-23T17:14:32.795+08:00 ICS43434: BCLK=4, WS=5, SD=6. Sending ADPCM: 20 ms / 180 bytes / 50 packets per second.
+2026-09-23T17:14:32.795+08:00 Commands on MIC: t = send 500 Hz tone over radio, s = send silence, a = microphone (press Enter).
+2026-09-23T17:14:37.581+08:00 TX sent=239 completed=238 failed=0 busy-drop=1 I2S-errors=0 peak=32768/32768 rms=3803 clipped=3/76800 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:14:42.564+08:00 TX sent=489 completed=488 failed=0 busy-drop=1 I2S-errors=0 peak=32764/32768 rms=482 clipped=0/80000 Lpeak=32764 Rpeak=0 source=MIC
+2026-09-23T17:14:47.622+08:00 TX sent=739 completed=738 failed=0 busy-drop=2 I2S-errors=0 peak=32768/32768 rms=3299 clipped=37/80320 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:14:52.618+08:00 TX sent=985 completed=984 failed=0 busy-drop=6 I2S-errors=0 peak=32767/32768 rms=354 clipped=1/80000 Lpeak=32767 Rpeak=0 source=MIC
+2026-09-23T17:14:57.602+08:00 TX sent=1235 completed=1234 failed=0 busy-drop=7 I2S-errors=0 peak=32768/32768 rms=1003 clipped=6/80320 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:15:02.605+08:00 TX sent=1484 completed=1483 failed=0 busy-drop=8 I2S-errors=0 peak=32768/32768 rms=2013 clipped=23/80000 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:15:07.650+08:00 TX sent=1728 completed=1727 failed=0 busy-drop=15 I2S-errors=0 peak=32768/32768 rms=1996 clipped=29/80320 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:15:12.655+08:00 TX sent=1976 completed=1975 failed=0 busy-drop=17 I2S-errors=0 peak=32768/32768 rms=1501 clipped=27/80000 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:15:17.662+08:00 TX sent=2227 completed=2226 failed=0 busy-drop=17 I2S-errors=0 peak=32768/32768 rms=1990 clipped=29/80320 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:15:22.661+08:00 TX sent=2475 completed=2474 failed=0 busy-drop=19 I2S-errors=0 peak=32768/32768 rms=2142 clipped=40/80000 Lpeak=32768 Rpeak=0 source=MIC
+2026-09-23T17:15:27.661+08:00 TX sent=2721 completed=2720 failed=0 busy-drop=24 I2S-errors=0 peak=32768/32768 rms=2447 clipped=31/80320 Lpeak=32768 Rpeak=0 source=MIC

@@ -1,0 +1,5 @@
+{
+  "name": "esp_stream_codecs",
+  "version": "1.0.0",
+  "build": {"extraScript": "link.py"}
+}

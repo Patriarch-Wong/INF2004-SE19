@@ -1,0 +1,9 @@
+# Consecutive TX readings after unicast and 20 ms send wait.
+# The preceding partial line is omitted. These are not simultaneous RX logs.
+TX sent=5499 completed=5498 failed=0 busy-drop=2 I2S-errors=0 DMA-overflows=0 peak=21642/32768 rms=2800 clipped=0/80320 Lpeak=21642 Rpeak=0 source=MIC
+TX sent=5750 completed=5749 failed=0 busy-drop=2 I2S-errors=0 DMA-overflows=0 peak=19703/32768 rms=3088 clipped=0/80320 Lpeak=19703 Rpeak=0 source=MIC
+TX sent=6000 completed=5999 failed=0 busy-drop=3 I2S-errors=0 DMA-overflows=0 peak=21431/32768 rms=2157 clipped=0/80320 Lpeak=21431 Rpeak=0 source=MIC
+TX sent=6251 completed=6250 failed=0 busy-drop=3 I2S-errors=0 DMA-overflows=0 peak=18239/32768 rms=1820 clipped=0/80320 Lpeak=18239 Rpeak=0 source=MIC
+TX sent=6502 completed=6501 failed=0 busy-drop=3 I2S-errors=0 DMA-overflows=0 peak=21810/32768 rms=2591 clipped=0/80320 Lpeak=21810 Rpeak=0 source=MIC
+TX sent=6753 completed=6752 failed=0 busy-drop=3 I2S-errors=0 DMA-overflows=0 peak=14444/32768 rms=1725 clipped=0/80320 Lpeak=14444 Rpeak=0 source=MIC
+TX sent=7004 completed=7003 failed=0 busy-drop=3 I2S-errors=0 DMA-overflows=0 peak=753/32768 rms=98 clipped=0/80320 Lpeak=753 Rpeak=0 source=MIC

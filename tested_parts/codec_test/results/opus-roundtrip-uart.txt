@@ -1,0 +1,55 @@
+Decoder allocated: internal free=288756, largest block=249844, PSRAM free=8071987 bytes
+Decoding the stored packets in order...
+Packets: 151 | payload min/max: 60/60 bytes | payload total: 9060 bytes
+Stored stream: 9362 bytes including lengths | PCM/stream: 10.25x
+Decoded: 48320 samples; trimmed to 48000 after delay/padding removal
+Aligned audio: correlation=0.9991 | SNR=27.26 dB | output RMS=6334.6
+Encode: avg 6.346 ms | max 7.007 ms | frames > 20 ms: 0/151
+Decode: avg 2.385 ms | max 2.673 ms | frames > 20 ms: 0/151
+Combined codec CPU time / padded audio duration: 0.437
+Codec task minimum unused stack: 61436 bytes
+PASS: Opus encode/store/decode and audio sanity checks
+After cleanup: free heap=306548, free PSRAM=8326019 bytes
+Send 'r' to repeat the test.
+
+--- Opus round-trip | libopus unknown-fixed ---
+16000 Hz, mono PCM16, 24000 bps CBR, 20 ms/frame, complexity 5
+Before allocations: internal free=306548, largest block=270324, PSRAM free=8326019 bytes
+Input: 48000 samples (96000 bytes), 3.0 s | lookahead: 104 samples
+Codec state: encoder=24540, decoder=17776 bytes (allocated sequentially)
+Encoder allocated: internal free=281992, largest block=245748, PSRAM free=8071987 bytes
+Encoding all frames into a length-prefixed packet buffer...
+Decoder allocated: internal free=288756, largest block=249844, PSRAM free=8071987 bytes
+Decoding the stored packets in order...
+Packets: 151 | payload min/max: 60/60 bytes | payload total: 9060 bytes
+Stored stream: 9362 bytes including lengths | PCM/stream: 10.25x
+Decoded: 48320 samples; trimmed to 48000 after delay/padding removal
+Aligned audio: correlation=0.9991 | SNR=27.26 dB | output RMS=6334.6
+Encode: avg 6.346 ms | max 7.021 ms | frames > 20 ms: 0/151
+Decode: avg 2.385 ms | max 2.675 ms | frames > 20 ms: 0/151
+Combined codec CPU time / padded audio duration: 0.437
+Codec task minimum unused stack: 61324 bytes
+PASS: Opus encode/store/decode and audio sanity checks
+After cleanup: free heap=306548, free PSRAM=8326019 bytes
+Send 'r' to repeat the test.
+
+--- Opus round-trip | libopus unknown-fixed ---
+16000 Hz, mono PCM16, 24000 bps CBR, 20 ms/frame, complexity 5
+Before allocations: internal free=306548, largest block=270324, PSRAM free=8326019 bytes
+Input: 48000 samples (96000 bytes), 3.0 s | lookahead: 104 samples
+Codec state: encoder=24540, decoder=17776 bytes (allocated sequentially)
+Encoder allocated: internal free=281992, largest block=245748, PSRAM free=8071987 bytes
+Encoding all frames into a length-prefixed packet buffer...
+Decoder allocated: internal free=288756, largest block=249844, PSRAM free=8071987 bytes
+Decoding the stored packets in order...
+Packets: 151 | payload min/max: 60/60 bytes | payload total: 9060 bytes
+Stored stream: 9362 bytes including lengths | PCM/stream: 10.25x
+Decoded: 48320 samples; trimmed to 48000 after delay/padding removal
+Aligned audio: correlation=0.9991 | SNR=27.26 dB | output RMS=6334.6
+Encode: avg 6.346 ms | max 7.021 ms | frames > 20 ms: 0/151
+Decode: avg 2.385 ms | max 2.675 ms | frames > 20 ms: 0/151
+Combined codec CPU time / padded audio duration: 0.437
+Codec task minimum unused stack: 61324 bytes
+PASS: Opus encode/store/decode and audio sanity checks
+After cleanup: free heap=306548, free PSRAM=8326019 bytes
+Send 'r' to repeat the test.
