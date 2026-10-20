@@ -120,8 +120,3 @@ BARR-C applies where relevant to C code.
 - Libraries pinned in `lib_deps`: Adafruit ST7735 and ST7789 Library,
   TJpg_Decoder, RadioLib, and
   [arduino-libopus](https://github.com/pschatzmann/arduino-libopus).
-
-## Academic integrity
-
-This repository was created for assessment in INF2004. Do not copy or reuse
-it for your own coursework submission.
