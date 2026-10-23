@@ -30,6 +30,7 @@ INF2004-SE19/
     ├── codec_test/           Opus encode/store/decode round trip
     ├── codec_sdtest/         Opus + onboard SDMMC with reusable C/C++ APIs
     ├── espnow_test/          Two-board ESP-NOW exchange with MAC whitelist
+    ├── espnow_encrypt_test/  espnow_test with CCMP encryption (PMK + LMK)
     ├── espnow_sd_test/       One-way ESP-NOW transfer saved and verified on SD
     ├── lora_test/            Core1121 868 MHz LoRa PING/PONG
     └── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
@@ -93,6 +94,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [codec_test](tested_parts/codec_test/) | Three Opus hardware round trips passed over UART |
 | [codec_sdtest](tested_parts/codec_sdtest/) | Three Opus + SD hardware round trips passed |
 | [espnow_test](tested_parts/espnow_test/) | Two-way reception confirmed; unknown-device rejection not tested |
+| [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | All four environments build; hardware tests pending |
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
 | [lora_test](tested_parts/lora_test/) | Hardware PING/PONG confirmed; latest fix awaits hardware retest |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
