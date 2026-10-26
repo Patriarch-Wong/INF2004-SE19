@@ -11,13 +11,13 @@ This project seals each message once in application code, at the source
 handset, and opens it only at the destination handset. ESP-NOW link
 encryption is off here, so every test exercises only the application layer.
 
-Status: stage 1 of 5. Host tests pass, all ten firmware environments build,
-and all six stage 1 hardware steps passed on 2026-10-27.
+Status: stages 1 and 2 hardware-complete. All six stage 1 steps and all
+three stage 2 attacker modes passed on 2026-10-27.
 
 | Stage | Boards | Covers | Status |
 | --- | --- | --- | --- |
 | 1 | 2–3 | Message format, pairwise keys, replay window, tamper/forge/replay/impersonate builds | Hardware-tested; all steps pass |
-| 2 | 3 | Board 3 as attacker: over-the-air replay, spoofed MAC, unknown device | Planned |
+| 2 | 3 | Board 3 as attacker: over-the-air replay, spoofed MAC, unknown device | Hardware-tested; all modes pass |
 | 3 | 3 | Board 3 as relay without the end-to-end key; per-hop latency | Planned |
 | 4 | 3 | Pairing (BOOT button or serial), keys in NVS, session keys | Planned |
 | 5 | 2–3 | Confidentiality capture, synthetic voice latency | Planned |
@@ -186,6 +186,146 @@ capture about 15 s of serial from both boards.
    `WARNING`, and RX from board 1 continues. Then flash board 3 with `board3`:
    board 1 should print RX `from 3`, showing board 3's own frames are valid.
 
+## Hardware test procedure (stage 2)
+
+This uses a
+controlled broadcast fixture, not promiscuous capture of ordinary unicast:
+`board1-capture` seals normal 1→2 messages but broadcasts the ciphertext.
+Board 2 authenticates and decrypts normally. Board 3 captures the actual
+radio payload using the ESP-NOW callback, without keys or crypto code.
+It keeps the first frame and injects it once per second after a one-second
+wait. Match its `CAPTURE` counter and hex to board 1's TX and board 2's RX.
+A replay result is conclusive only if board 2 accepted that counter first.
+If the original was lost, its first replay may legitimately be accepted;
+subsequent copies must be rejected. Do not reset board 2 during a run.
+
+### Flashing
+
+Run from this directory. List ports with `pio device list`; substitute each
+board's actual port below. Use the UART connector for these environments.
+For every upload: hold BOOT, tap RESET, release BOOT, upload, then press
+RESET again to start the application. Close serial monitors before uploads.
+The physical-MAC checks stop firmware flashed to the wrong board.
+
+```sh
+pio run -e board2 -t upload --upload-port BOARD2_PORT
+pio run -e board1-capture -t upload --upload-port BOARD1_PORT
+pio run -e board3-air-replay -t upload --upload-port BOARD3_PORT
+pio device monitor -p BOARD2_PORT -b 115200
+```
+
+Start board 2's monitor first and leave it open. Monitor board 3 in a second
+terminal (or USB-power board 1 separately when only two USB ports are
+available). Reset board 3 after board 2 is receiving. Save 15–20 seconds of
+both logs for each mode. Keep board 1 powered and sending throughout.
+
+1. **Over-the-air replay:** board 3 uses `board3-air-replay`, its normal
+   allowlisted MAC, and no keys. Expect `Keys held: 0`, a `CAPTURE` line,
+   then `TX captured replay`. Board 2 must reject copies as `replay
+   (counter N)` from board 3's MAC, while fresh board 1 messages continue.
+2. **Spoofed MAC:** reflash only board 3 with `board3-spoof`. It captures
+   under its real MAC, then restarts Wi-Fi with board 1's MAC. Each second
+   it sends the unchanged capture plus a copy with one ciphertext bit
+   flipped. Board 2 must show `replay (counter N)` for the unchanged copy
+   and `bad hop tag` for the mutation, both apparently from board 1's MAC.
+   Fresh board 1 messages must continue. The duplicate MAC is deliberate;
+   judge application RX logs, not Wi-Fi delivery acknowledgements.
+3. **Unknown device:** reflash only board 3 with `board3-unknown`. After
+   capture it uses `02:53:45:19:00:03`, which is not allowlisted, and sends
+   the unchanged capture. Board 2's ten-second `unknown MAC drops` counter
+   must increase, with no application RX of that captured counter from
+   the unknown MAC. These drops happen before authentication and are not
+   included in `rejected`. Fresh board 1 traffic must continue.
+
+```sh
+pio run -e board3-spoof -t upload --upload-port BOARD3_PORT
+# Complete and save the spoof test before the next upload.
+pio run -e board3-unknown -t upload --upload-port BOARD3_PORT
+```
+
+All tests require zero receive-queue drops and no negative-build WARNING.
+`queued` on board 3 only means local acceptance; receiver logs are required
+for a pass. Unknown-MAC drops can include unrelated traffic, so compare
+with a baseline while board 3 is off, then observe the increase while it
+injects. After testing, restore `board1` and `board3` using the same upload
+procedure. No key regeneration or NVS erase is needed.
+
+The three attacker environments compile only `src/attacker.cpp`; they never
+include `e2e_keys.h`. The broadcast fixture changes radio delivery only;
+the protected destination remains device 2. Normal environments retain
+unicast behavior. Passive unicast sniffing and receiver-reboot replay
+protection are outside this stage.
+
+## Stage 2 hardware results
+
+2026-10-27, rerun of all three modes with board 1 (`board1-capture`) and
+board 2 (`board2`) unchanged. For each mode, board 3 was uploaded and left
+in the bootloader. Board 2's serial was opened first, which reset it; board
+3's was opened 12 s later, which started the attacker. Both logs were
+captured for 36 s with shared timestamps, so board 2 was receiving before
+each capture and was not reset during the attack.
+Full logs: [`evidence/stage2/`](evidence/stage2/), one file per board
+and mode, seconds since the capture started.
+
+Over-the-air replay (`board3-air-replay`):
+
+```text
+13.09 [board 2] RX E0:72:A1:D5:64:0C | from 1 | counter 16902 | "HELLO SE19 #16902"
+13.14 [board 3] CAPTURE source 1 -> 2 | counter 16902 | 0101010206420000B1B4...
+14.12 [board 2] REJECT E0:72:A1:D7:F6:50 | 58 bytes | replay (counter 16902)
+30.09 [board 2] Status | accepted 29 | rejected 16 | queue drops 0 | unknown MAC drops 0
+```
+
+Board 2 accepted the original 16902 from board 1, then rejected all 23
+copies from board 3's MAC as replays while its highest counter was 1–23
+ahead, so these were in-window duplicates. It accepted every fresh counter
+16890–16925.
+
+Spoofed MAC (`board3-spoof`):
+
+```text
+13.23 [board 2] RX E0:72:A1:D5:64:0C | from 1 | counter 17348 | "HELLO SE19 #17348"
+13.24 [board 3] CAPTURE source 1 -> 2 | counter 17348 | 01010102C4430000B11D...
+14.25 [board 2] REJECT E0:72:A1:D5:64:0C | 58 bytes | replay (counter 17348)
+14.25 [board 2] REJECT E0:72:A1:D5:64:0C | 58 bytes | bad hop tag
+30.03 [board 2] Status | accepted 29 | rejected 32 | queue drops 0 | unknown MAC drops 0
+```
+
+Board 3 sent 22 unchanged copies and 22 mutations under board 1's MAC.
+Board 2 rejected exactly 22 as `replay (counter 17348)` and 22 as `bad hop
+tag`, with no other rejections, and accepted every fresh counter
+17336–17370. The MAC gave no protection; the hop tag and replay window did.
+
+Unknown device (`board3-unknown`):
+
+```text
+10.04 [board 2] Status | accepted 9 | rejected 0 | queue drops 0 | unknown MAC drops 0
+13.24 [board 3] CAPTURE source 1 -> 2 | counter 17500 | 010101025C440000AFE0...
+13.24 [board 2] RX E0:72:A1:D5:64:0C | from 1 | counter 17500 | "HELLO SE19 #17500"
+20.04 [board 2] Status | accepted 19 | rejected 0 | queue drops 0 | unknown MAC drops 6
+30.09 [board 2] Status | accepted 29 | rejected 0 | queue drops 0 | unknown MAC drops 16
+```
+
+The 10 s checkpoint, with board 3 still in the bootloader, is the
+attacker-off baseline: zero drops. Board 3 queued 6 frames before the 20 s
+checkpoint and 10 between 20 s and 30 s, matching the increases exactly.
+No RX or REJECT came from `02:53:45:19:00:03`, and board 2 accepted every
+fresh counter 17488–17522.
+
+No run showed a `WARNING` or a queue drop.
+
+| Mode | Build under test | Expected | Observed | Result |
+| --- | --- | --- | --- | --- |
+| Air replay | `board3-air-replay` | Original accepted; copies rejected `replay` | 16902 accepted, then 23/23 copies rejected in-window; fresh RX unaffected | Pass |
+| Spoofed MAC | `board3-spoof` | Copies `replay`, mutations `bad hop tag`, from board 1's MAC | 17348 accepted, then 22/22 `replay` and 22/22 `bad hop tag`; fresh RX unaffected | Pass |
+| Unknown device | `board3-unknown` | Dropped before authentication; `rejected` stays 0 | Drops 0 → 6 → 16, matching 6 and 10 sends; no RX from unknown MAC | Pass |
+
+Earlier runs the same day showed the same rejections but had evidence
+gaps: the first replay run lacked board 3's `CAPTURE` line and board 2's
+original acceptance, and opening board 2's port during the spoof run reset
+it, so 15443 was rejected as older than the window rather than as an
+in-window duplicate. The rerun above replaces them.
+
 ## Test results
 
 2026-10-27, board 3 alone (`board3`): the first flash printed
@@ -278,8 +418,7 @@ run with three handsets on air at once.
   spare board.
 - **Network key:** shared by every board, so any board can produce a valid
   hop tag. It only gates the relay; sender identity comes from the pair key.
-- **Not covered yet:** relay forwarding, over-the-air attacks from a third
-  board, pairing, LoRa and voice. See the stage table.
+- **Not covered yet:** relay forwarding, passive unicast sniffing, pairing, LoRa and voice. See the stage table.
 
 ## Project files
 

@@ -96,6 +96,10 @@ private:
 
 QueueHandle_t receive_queue = nullptr;
 std::atomic<uint32_t> queue_drops{0};
+std::atomic<uint32_t> unknown_drops{0};
+#if defined(E2E_STAGE2_CAPTURE)
+constexpr uint8_t destination_mac[6] = {255, 255, 255, 255, 255, 255};
+#endif
 uint8_t local_mac[6] = {};
 const device *local = nullptr;
 const device *peer = nullptr;
@@ -182,8 +186,13 @@ void on_receive(const uint8_t *mac, const uint8_t *data, int length)
     // Cheap filters only; authentication happens in loop().
     if (!mac || !data || length < static_cast<int>(secure_message::overhead) ||
         length > static_cast<int>(secure_message::max_frame_size) ||
-        !find_device(mac) || memcmp(mac, local_mac, 6) == 0)
+        memcmp(mac, local_mac, 6) == 0)
     {
+        return;
+    }
+    if (!find_device(mac))
+    {
+        unknown_drops.fetch_add(1);
         return;
     }
     received_frame frame = {};
@@ -310,7 +319,11 @@ bool start()
     // Link-layer CCMP stays off so the tests exercise only the
     // application-layer protection.
     esp_now_peer_info_t info = {};
+#if defined(E2E_STAGE2_CAPTURE)
+    memcpy(info.peer_addr, destination_mac, 6);
+#else
     memcpy(info.peer_addr, peer->mac, 6);
+#endif
     info.channel = network_config::channel;
     info.ifidx = WIFI_IF_STA;
     info.encrypt = false;
@@ -440,7 +453,11 @@ void send_message()
             secure_message::status_name(result));
         return;
     }
+#if defined(E2E_STAGE2_CAPTURE)
+    const esp_err_t sent = esp_now_send(destination_mac, frame, frame_size);
+#else
     const esp_err_t sent = esp_now_send(peer->mac, frame, frame_size);
+#endif
     // Queued means accepted locally; RX on the other board confirms delivery.
     Serial.printf("TX %lu | %u bytes | %s | ",
         static_cast<unsigned long>(value),
@@ -495,6 +512,9 @@ void setup()
     }
     Serial.printf("\n%s\n", app_config::project_name);
     Serial.printf("Build mode: %s\n", mode_names[build_mode]);
+#if defined(E2E_STAGE2_CAPTURE)
+    Serial.println("Stage 2 fixture: broadcast ciphertext addressed to 2");
+#endif
     ready = start();
     if (ready)
     {
@@ -530,10 +550,11 @@ void loop()
     {
         last_status_ms = now;
         Serial.printf("Status | accepted %lu | rejected %lu | queue drops "
-                      "%lu\n",
+                      "%lu | unknown MAC drops %lu\n",
             static_cast<unsigned long>(accepted_count),
             static_cast<unsigned long>(rejected_count),
-            static_cast<unsigned long>(queue_drops.load()));
+            static_cast<unsigned long>(queue_drops.load()),
+            static_cast<unsigned long>(unknown_drops.load()));
     }
     update_led(now);
     delay(1);

@@ -1,0 +1,35 @@
+ 12.11 ESP-ROM:esp32s3-20210327
+ 12.11 Build:Mar 27 2021
+ 12.11 rst:0x1 (POWERON),boot:0x28 (SPI_FAST_FLASH_BOOT)
+ 12.11 SPIWP:0xee
+ 12.11 mode:DIO, clock div:1
+ 12.11 load:0x3fce3808,len:0x4bc
+ 12.11 load:0x403c9700,len:0xbd8
+ 12.11 load:0x403cc700,len:0x2a0c
+ 12.11 entry 0x403c98d0
+ 12.21 Stage 2: AIR REPLAY from board 3 MAC
+ 12.21 Keys held: 0; waiting for board1-capture broadcast
+ 13.14 CAPTURE source 1 -> 2 | counter 16902 | 0101010206420000B1B441E8CA9A27A6F0BBCD864BC368D97E7D791E20F7A0B46AD6823CEFE777D856AFB4AC01A274AC6E877864094EFA162DFF
+ 14.17 TX captured replay | 58 bytes | queued
+ 15.09 TX captured replay | 58 bytes | queued
+ 16.13 TX captured replay | 58 bytes | queued
+ 17.17 TX captured replay | 58 bytes | queued
+ 18.10 TX captured replay | 58 bytes | queued
+ 19.13 TX captured replay | 58 bytes | queued
+ 20.16 TX captured replay | 58 bytes | queued
+ 21.09 TX captured replay | 58 bytes | queued
+ 22.12 TX captured replay | 58 bytes | queued
+ 23.16 TX captured replay | 58 bytes | queued
+ 24.10 TX captured replay | 58 bytes | queued
+ 25.13 TX captured replay | 58 bytes | queued
+ 26.16 TX captured replay | 58 bytes | queued
+ 27.10 TX captured replay | 58 bytes | queued
+ 28.13 TX captured replay | 58 bytes | queued
+ 29.17 TX captured replay | 58 bytes | queued
+ 30.10 TX captured replay | 58 bytes | queued
+ 31.13 TX captured replay | 58 bytes | queued
+ 32.16 TX captured replay | 58 bytes | queued
+ 33.09 TX captured replay | 58 bytes | queued
+ 34.13 TX captured replay | 58 bytes | queued
+ 35.16 TX captured replay | 58 bytes | queued
+ 36.08 TX captured replay | 58 bytes | queued

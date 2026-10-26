@@ -1,0 +1,56 @@
+ 12.11 ESP-ROM:esp32s3-20210327
+ 12.11 Build:Mar 27 2021
+ 12.11 rst:0x1 (POWERON),boot:0x28 (SPI_FAST_FLASH_BOOT)
+ 12.11 SPIWP:0xee
+ 12.11 mode:DIO, clock div:1
+ 12.11 load:0x3fce3808,len:0x4bc
+ 12.11 load:0x403c9700,len:0xbd8
+ 12.11 load:0x403cc700,len:0x2a0c
+ 12.11 entry 0x403c98d0
+ 12.21 Stage 2: SPOOF board 1 MAC; replay + modified capture
+ 12.21 Keys held: 0; waiting for board1-capture broadcast
+ 13.24 CAPTURE source 1 -> 2 | counter 17348 | 01010102C4430000B11DD68ADAB8351C73BB0E0F575F66C7A5E7B83680959092FA824AAEFD6DED3FAB926B52ABCD64EAD9D390172CF14A3A0BA5
+ 14.17 TX captured replay | 58 bytes | queued
+ 14.17 TX spoofed mutation | 58 bytes | queued
+ 15.21 TX captured replay | 58 bytes | queued
+ 15.21 TX spoofed mutation | 58 bytes | queued
+ 16.23 TX captured replay | 58 bytes | queued
+ 16.23 TX spoofed mutation | 58 bytes | queued
+ 17.27 TX captured replay | 58 bytes | queued
+ 17.27 TX spoofed mutation | 58 bytes | queued
+ 18.20 TX captured replay | 58 bytes | queued
+ 18.20 TX spoofed mutation | 58 bytes | queued
+ 19.25 TX captured replay | 58 bytes | queued
+ 19.25 TX spoofed mutation | 58 bytes | queued
+ 20.17 TX captured replay | 58 bytes | queued
+ 20.17 TX spoofed mutation | 58 bytes | queued
+ 21.21 TX captured replay | 58 bytes | queued
+ 21.21 TX spoofed mutation | 58 bytes | queued
+ 22.25 TX captured replay | 58 bytes | queued
+ 22.25 TX spoofed mutation | 58 bytes | queued
+ 23.17 TX captured replay | 58 bytes | queued
+ 23.28 TX spoofed mutation | 58 bytes | queued
+ 24.21 TX captured replay | 58 bytes | queued
+ 24.21 TX spoofed mutation | 58 bytes | queued
+ 25.24 TX captured replay | 58 bytes | queued
+ 25.24 TX spoofed mutation | 58 bytes | queued
+ 26.28 TX captured replay | 58 bytes | queued
+ 26.28 TX spoofed mutation | 58 bytes | queued
+ 27.21 TX captured replay | 58 bytes | queued
+ 27.21 TX spoofed mutation | 58 bytes | queued
+ 28.24 TX captured replay | 58 bytes | queued
+ 28.24 TX spoofed mutation | 58 bytes | queued
+ 29.27 TX captured replay | 58 bytes | queued
+ 29.27 TX spoofed mutation | 58 bytes | queued
+ 30.20 TX captured replay | 58 bytes | queued
+ 30.20 TX spoofed mutation | 58 bytes | queued
+ 31.23 TX captured replay | 58 bytes | queued
+ 31.23 TX spoofed mutation | 58 bytes | queued
+ 32.27 TX captured replay | 58 bytes | queued
+ 32.27 TX spoofed mutation | 58 bytes | queued
+ 33.19 TX captured replay | 58 bytes | queued
+ 33.19 TX spoofed mutation | 58 bytes | queued
+ 34.23 TX captured replay | 58 bytes | queued
+ 34.23 TX spoofed mutation | 58 bytes | queued
+ 35.25 TX captured replay | 58 bytes | queued
+ 35.25 TX spoofed mutation | 58 bytes | queued
