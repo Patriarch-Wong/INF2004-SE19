@@ -378,6 +378,17 @@ void handle_command()
     {
         toggle_pause();
     }
+    else if (std::strcmp(command, "delete") == 0)
+    {
+        video.close();
+        if (SD_MMC.exists(video_path) && !SD_MMC.remove(video_path))
+        {
+            Serial.println("ERROR cannot delete video");
+            return;
+        }
+        show_message("Upload video\nover USB");
+        Serial.println("DELETED");
+    }
     else if (std::strncmp(command, "put ", 4) == 0)
     {
         unsigned long size = 0;
