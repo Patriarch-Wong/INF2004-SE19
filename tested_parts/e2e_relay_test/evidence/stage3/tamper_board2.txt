@@ -1,0 +1,48 @@
+ 12.11 ESP-ROM:esp32s3-20210327
+ 12.11 Build:Mar 27 2021
+ 12.11 rst:0x1 (POWERON),boot:0x2a (SPI_FAST_FLASH_BOOT)
+ 12.11 SPIWP:0xee
+ 12.11 mode:DIO, clock div:1
+ 12.11 load:0x3fce3808,len:0x4bc
+ 12.11 load:0x403c9700,len:0xbd8
+ 12.11 load:0x403cc700,len:0x2a0c
+ 12.11 entry 0x403c98d0
+ 12.22 
+ 12.22 ESP-NOW end-to-end relay test
+ 12.22 Route: via relay
+ 12.22 Crypto self-test passed (AES-GCM, HMAC-SHA256)
+ 12.32 Wi-Fi station MAC: E0:72:A1:D7:FA:B8
+ 12.32 Device 2 (handset) -> device 1 via E0:72:A1:D7:F6:50 (device 3), channel 1
+ 12.32 Pair keys held: 1
+ 12.32 ESP-NOW link encryption: off (application layer only)
+ 12.32 Ready; answering pings from device 1.
+ 12.94 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 13.98 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 14.89 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 15.93 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 16.96 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 17.89 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 18.92 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 19.96 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 20.99 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 21.91 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 22.12 Status | accepted 0 | rejected 10 | queue drops 0 | unknown MAC drops 0
+ 22.95 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 23.98 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 24.91 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 25.94 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 26.98 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 27.91 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 28.94 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 29.97 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 30.90 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 31.94 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 32.04 Status | accepted 0 | rejected 20 | queue drops 0 | unknown MAC drops 0
+ 32.97 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 33.90 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 34.93 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 35.96 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 36.98 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 37.91 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 38.95 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag
+ 39.98 REJECT E0:72:A1:D7:F6:50 | 59 bytes | bad end-to-end tag

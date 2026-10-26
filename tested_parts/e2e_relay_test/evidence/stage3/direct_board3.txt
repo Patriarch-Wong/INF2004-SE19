@@ -1,0 +1,24 @@
+  0.11 ESP-ROM:esp32s3-20210327
+  0.11 Build:Mar 27 2021
+  0.11 rst:0x1 (POWERON),boot:0x28 (SPI_FAST_FLASH_BOOT)
+  0.11 SPIWP:0xee
+  0.11 mode:DIO, clock div:1
+  0.11 load:0x3fce3808,len:0x4bc
+  0.11 load:0x403c9700,len:0xbd8
+  0.11 load:0x403cc700,len:0x2a0c
+  0.11 entry 0x403c98d0
+  0.21 
+  0.21 ESP-NOW end-to-end relay test
+  0.21 Build mode: relay, TAMPER (negative test)
+  0.21 Crypto self-test passed (AES-GCM, HMAC-SHA256)
+  0.31 Wi-Fi station MAC: E0:72:A1:D7:F6:50
+  0.31 Device 3 (relay), channel 1
+  0.31 Pair keys held: 0
+  0.31 ESP-NOW link encryption: off (application layer only)
+  0.31 Ready; forwarding between handsets.
+ 10.02 Status | forwarded 0 | dropped 0 | send failures 0 | queue drops 0 | unknown MAC drops 0
+ 20.06 Status | forwarded 0 | dropped 0 | send failures 0 | queue drops 0 | unknown MAC drops 0
+ 30.09 Status | forwarded 0 | dropped 0 | send failures 0 | queue drops 0 | unknown MAC drops 0
+ 40.03 Status | forwarded 0 | dropped 0 | send failures 0 | queue drops 0 | unknown MAC drops 0
+ 50.10 Status | forwarded 0 | dropped 0 | send failures 0 | queue drops 0 | unknown MAC drops 0
+ 60.05 Status | forwarded 0 | dropped 0 | send failures 0 | queue drops 0 | unknown MAC drops 0

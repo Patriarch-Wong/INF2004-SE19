@@ -18,7 +18,7 @@ three stage 2 attacker modes passed on 2026-10-27.
 | --- | --- | --- | --- |
 | 1 | 2–3 | Message format, pairwise keys, replay window, tamper/forge/replay/impersonate builds | Hardware-tested; all steps pass |
 | 2 | 3 | Board 3 as attacker: over-the-air replay, spoofed MAC, unknown device | Hardware-tested; all modes pass |
-| 3 | 3 | Board 3 as relay without the end-to-end key; per-hop latency | Planned |
+| 3 | 3 | Board 3 as relay without the end-to-end key; per-hop latency | Hardware-tested in [e2e_relay_test](../e2e_relay_test/); all tests pass |
 | 4 | 3 | Pairing (BOOT button or serial), keys in NVS, session keys | Planned |
 | 5 | 2–3 | Confidentiality capture, synthetic voice latency | Planned |
 
