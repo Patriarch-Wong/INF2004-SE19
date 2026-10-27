@@ -19,7 +19,7 @@ three stage 2 attacker modes passed on 2026-10-27.
 | 1 | 2–3 | Message format, pairwise keys, replay window, tamper/forge/replay/impersonate builds | Hardware-tested; all steps pass |
 | 2 | 3 | Board 3 as attacker: over-the-air replay, spoofed MAC, unknown device | Hardware-tested; all modes pass |
 | 3 | 3 | Board 3 as relay without the end-to-end key; per-hop latency | Hardware-tested in [e2e_relay_test](../e2e_relay_test/); all tests pass |
-| 4 | 3 | Pairing (BOOT button or serial), keys in NVS, session keys | Planned |
+| 4 | 3 | Pairing (BOOT button or serial), keys in NVS, session keys | Hardware-tested in [e2e_pairing_test](../e2e_pairing_test/); six of seven tests pass, BOOT button partial |
 | 5 | 2–3 | Confidentiality capture, synthetic voice latency | Planned |
 
 ## Protected message format
@@ -409,9 +409,9 @@ run with three handsets on air at once.
 ## Limits
 
 - **Receiver reboot:** replay windows are in RAM, so after the receiver
-  reboots it would accept recent frames again. Stage 4 fixes this with
-  per-boot session keys agreed during pairing, which make old frames fail
-  the end-to-end tag.
+  reboots it would accept recent frames again. Stage 4
+  ([e2e_pairing_test](../e2e_pairing_test/)) fixes this with per-boot
+  session keys, which make old frames fail the end-to-end tag.
 - **Key storage:** keys are compiled in and readable from flash, so anyone
   with physical access to board 1 can read the 1–2 and 1–3 keys (but not
   2–3). Enabling flash encryption burns eFuses permanently; try it only on a

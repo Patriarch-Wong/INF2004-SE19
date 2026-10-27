@@ -1,0 +1,23 @@
+  0.10 ESP-ROM:esp32s3-20210327
+  0.10 Build:Mar 27 2021
+  0.10 rst:0x1 (POWERON),boot:0x28 (SPI_FAST_FLASH_BOOT)
+  0.10 SPIWP:0xee
+  0.10 mode:DIO, clock div:1
+  0.10 load:0x3fce3808,len:0x4bc
+  0.10 load:0x403c9700,len:0xbd8
+  0.10 load:0x403cc700,len:0x2a0c
+  0.10 entry 0x403c98d0
+  0.21 
+  0.21 ESP-NOW pairing and session key test
+  0.21 Build mode: PAIRING MITM (negative test)
+  0.93 Wi-Fi station MAC: E0:72:A1:D7:F6:50
+  0.93 Keys held: network only; no pair keys
+  1.04 MITM posing as 2 to device 1: offering
+  1.24 MITM posing as 1 to device 2: offering
+  8.27 MITM posing as 2: exchanging with device 1
+  8.47 MITM posing as 2: code 812032 with device 1; accepting
+  8.47 MITM posing as 2: failed with device 1 | peer aborted
+ 10.03 Status | pairing frames heard 9 | pairings completed 0 | queue drops 0
+ 10.44 MITM posing as 2 to device 1: offering
+ 20.04 Status | pairing frames heard 9 | pairings completed 0 | queue drops 0
+ 30.08 Status | pairing frames heard 9 | pairings completed 0 | queue drops 0

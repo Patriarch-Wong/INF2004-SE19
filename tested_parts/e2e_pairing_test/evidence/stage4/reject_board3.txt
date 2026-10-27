@@ -1,0 +1,36 @@
+  2.11 ESP-ROM:esp32s3-20210327
+  2.11 Build:Mar 27 2021
+  2.11 rst:0x1 (POWERON),boot:0x28 (SPI_FAST_FLASH_BOOT)
+  2.11 SPIWP:0xee
+  2.11 mode:DIO, clock div:1
+  2.11 load:0x3fce3808,len:0x4bc
+  2.11 load:0x403c9700,len:0xbd8
+  2.11 load:0x403cc700,len:0x2a0c
+  2.11 entry 0x403c98d0
+  2.22 
+  2.22 ESP-NOW pairing and session key test
+  2.22 Build mode: normal
+  2.84 Crypto self-test passed (AES-GCM, HMAC-SHA256, HKDF, X25519)
+  2.94 Wi-Fi station MAC: E0:72:A1:D7:F6:50
+  2.94 Device 3 (handset), channel 1
+  2.94 Compiled-in keys: network only
+  2.94 ESP-NOW link encryption: off (application layer only)
+  2.94 Pair keys in NVS: 0
+  2.94 KEYS | device 1 | not paired
+  2.94 KEYS | device 2 | not paired
+  2.94 Commands: pair | pair N | yes | no | unpair N | unpair all | keys | reboot
+  2.94 Ready; sending every 1000 ms per session.
+  6.54 >>> pair 1
+  6.65 CMD pair 1
+  6.75 PAIR searching | device 3 with device 1 | 60 s
+  6.85 PAIR exchanging with device 1
+  7.06 PAIR code 283376 with device 1 | yes or BOOT if device 1 shows the same code; no or hold BOOT to reject
+ 12.02 >>> no
+ 12.12 Status | accepted 0 | rejected 0 | queue drops 0 | unknown MAC drops 0 | own ID claims 0 | sessions 1=unpaired 2=unpaired
+ 12.12 CMD no
+ 12.12 PAIR FAILED | rejected on this device
+ 20.07 >>> keys
+ 20.17 CMD keys
+ 20.17 KEYS | device 1 | not paired
+ 20.17 KEYS | device 2 | not paired
+ 22.12 Status | accepted 0 | rejected 0 | queue drops 0 | unknown MAC drops 0 | own ID claims 0 | sessions 1=unpaired 2=unpaired
