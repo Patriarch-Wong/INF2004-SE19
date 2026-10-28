@@ -1,0 +1,119 @@
+{
+  "capture": {
+    "queued_unique": 3674,
+    "captured_unique": 3674,
+    "matched_unique": 3674,
+    "completeness": 1.0,
+    "marker_hits": {
+      "HELLO SE19": 0,
+      "SE19VOICE": 0,
+      "SE19ECHO": 0,
+      "SE19FILL": 0
+    },
+    "marker_frame_fraction": 0.0,
+    "retransmissions": 35,
+    "same_header_different_frames": 0,
+    "repeated_marker_ciphertext_across_counters": 0,
+    "clear_headers": [
+      [
+        1,
+        1,
+        2
+      ],
+      [
+        2,
+        1,
+        2
+      ],
+      [
+        2,
+        2,
+        1
+      ]
+    ],
+    "clear_counter_range": [
+      1,
+      3074
+    ],
+    "pass": true
+  },
+  "latency": {
+    "seal_us": {
+      "n": 3000,
+      "min": 469,
+      "median": 621,
+      "p99": 712,
+      "max": 823
+    },
+    "open_us": {
+      "n": 3000,
+      "min": 399,
+      "median": 457,
+      "p99": 559,
+      "max": 648
+    },
+    "rtt_us": {
+      "n": 600,
+      "min": 8713,
+      "median": 30720,
+      "p99": 107785,
+      "max": 136744
+    },
+    "estimated_one_way_us": {
+      "n": 600,
+      "min": 4356.5,
+      "median": 15360.0,
+      "p99": 53892.5,
+      "max": 68372.0
+    },
+    "seal_interval_percent": {
+      "n": 3000,
+      "min": 2.345,
+      "median": 3.105,
+      "p99": 3.56,
+      "max": 4.115
+    },
+    "open_interval_percent": {
+      "n": 3000,
+      "min": 1.995,
+      "median": 2.285,
+      "p99": 2.795,
+      "max": 3.24
+    },
+    "jitter_us": 9429.211528236507,
+    "playout": {
+      "20000": {
+        "on_time": 2840,
+        "late": 160,
+        "lost": 0,
+        "late_lost_fraction": 0.05333333333333334
+      },
+      "40000": {
+        "on_time": 2945,
+        "late": 55,
+        "lost": 0,
+        "late_lost_fraction": 0.018333333333333333
+      },
+      "60000": {
+        "on_time": 2985,
+        "late": 15,
+        "lost": 0,
+        "late_lost_fraction": 0.005
+      },
+      "80000": {
+        "on_time": 2995,
+        "late": 5,
+        "lost": 0,
+        "late_lost_fraction": 0.0016666666666666668
+      }
+    },
+    "crypto_max_sum_us": 1471,
+    "drops": [
+      "VOICE_DROPS timer 0 radio 0",
+      "VOICE_DROPS timer 0 radio 0",
+      "VOICE_DROPS timer 0 radio 0",
+      "VOICE_DROPS timer 0 radio 0"
+    ]
+  },
+  "added_one_way_median_us": 2407.5
+}

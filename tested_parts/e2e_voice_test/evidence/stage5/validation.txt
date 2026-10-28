@@ -1,0 +1,58 @@
+Stage 5 local validation — 2026-10-27
+Pre-hardware section; hardware results are in the follow-up section below.
+At the time of this section: hardware capture pending; no uploads performed.
+
+Inherited host suites:
+All secure_message host tests passed
+All pairing host tests passed
+All session host tests passed
+
+New host suites and mutation checks:
+voice and sniffer tests passed
+....
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK
+Killed: src/voice.cpp: info->sequence < info->frames
+Killed: src/voice.cpp: if (arrivals[s] == missing)
+Killed: src/voice.cpp: depth + (static_cast<int64_t>(s) - anchor) * interval
+Killed: src/voice.cpp: e.valid = false;
+Killed: src/voice.cpp: values[(n - 1) / 2]
+Killed: src/sniff_frame.cpp: b[pos + 5] == 4
+Killed: tools/analyse_capture.py: not marked and not collisions
+Killed: tools/analyse_capture.py: completeness >= .95
+
+PlatformIO build results:
+========================= [SUCCESS] Took 2.29 seconds =========================
+========================= [SUCCESS] Took 2.00 seconds =========================
+========================= [SUCCESS] Took 1.98 seconds =========================
+========================= [SUCCESS] Took 2.04 seconds =========================
+========================= [SUCCESS] Took 0.64 seconds =========================
+board1         SUCCESS   00:00:02.294
+board2         SUCCESS   00:00:01.999
+board1-plain   SUCCESS   00:00:01.981
+board2-plain   SUCCESS   00:00:02.042
+board3-sniff   SUCCESS   00:00:00.644
+
+26 inherited security/support files verified byte-identical.
+Sniffer firmware.bin: generated network key absent (find_keys.py).
+Pair/session keys: not compiled into sniffer; no crypto/session sources.
+Hardware C1, C2, V1, V2, V3: pending.
+
+Hardware follow-up — 2026-10-27
+Both encrypted and plaintext 60-second, 3,000-frame runs completed.
+C1: 3674/3674 unique frames captured; zero marker hits.
+C2: 3674/3674 unique frames captured; every data capture has a marker.
+C3: generated network key absent from sniffer image, all six capture logs,
+    both analysis JSON files and this validation file.
+V1: conservative crypto bound 1471 us; 15/3000 late at 60 ms; zero lost/drops.
+V2: plaintext median RTT/2 12952.5 us; encrypted 15360 us; delta +2407.5 us.
+    Plaintext 48/3000 late at 60 ms (1.6%); zero lost/drops.
+V3: encrypted late 160/55/15/5; plaintext 634/164/48/14 at 20/40/60/80 ms.
+    Offline counts agree with firmware; all loss counts zero.
+Separate single runs: delay difference includes radio/scheduler variation.
+V4: optional relay run not performed.
+Earlier pending statements above describe the pre-hardware validation.
+Boards currently run plaintext controls; restoring encryption requires
+user-managed flashing. No commits or pushes performed.

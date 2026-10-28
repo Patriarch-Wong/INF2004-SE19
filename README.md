@@ -29,6 +29,7 @@ INF2004-SE19/
     │   └── wireless_stream/  H.264/AAC playback while receiving into RAM
     ├── codec_test/           Opus encode/store/decode round trip
     ├── codec_sdtest/         Opus + onboard SDMMC with reusable C/C++ APIs
+    ├── e2e_voice_test/       Stage 5 synthetic voice and passive capture
     ├── e2e_pairing_test/     Pairing, pair keys in NVS, per-boot session keys
     ├── e2e_relay_test/       Relay forwards end-to-end messages without the key
     ├── e2e_security_test/    End-to-end AES-GCM messages, replay window, relay hop tag
@@ -96,6 +97,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [button_lcd_test](tested_parts/button_lcd_test/) | SD video playback with pause button; wireless A/V and streaming variants transfer with CRC32 verification |
 | [codec_test](tested_parts/codec_test/) | Three Opus hardware round trips passed over UART |
 | [codec_sdtest](tested_parts/codec_sdtest/) | Three Opus + SD hardware round trips passed |
+| [e2e_voice_test](tested_parts/e2e_voice_test/) | Stage 5 hardware-tested: 100% passive capture, encrypted/plaintext confidentiality controls pass; 50 fps voice with 0.5% encrypted versus 1.6% plaintext late at 60 ms, zero loss; baseline and buffer sweep complete |
 | [e2e_pairing_test](tested_parts/e2e_pairing_test/) | Stage 4 hardware-tested: pairing with code comparison, pair keys in NVS, new session key per boot; old frames rejected after a receiver reboot, pairing MITM stopped; BOOT-button pairing partial |
 | [e2e_relay_test](tested_parts/e2e_relay_test/) | Stage 3 hardware-tested: relay forwards without the pair key, no direct path, tampering relay rejected end to end; relaying adds ~3.2 ms per message |
 | [e2e_security_test](tested_parts/e2e_security_test/) | Stages 1–2 hardware-tested: two-way encrypted exchange, tamper, forge, replay, sender reboot, impersonation and over-the-air attacker all pass |
