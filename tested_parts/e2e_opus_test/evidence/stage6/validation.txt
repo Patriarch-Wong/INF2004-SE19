@@ -1,0 +1,45 @@
+Stage 6 local validation — 2026-10-28 (final code, after hardware runs)
+No uploads performed by the agent. Python tests include tools/air_delay.py.
+
+Inherited host suites:
+All secure_message host tests passed
+All pairing host tests passed
+All session host tests passed
+
+Stage 6 host suites (system libopus 1.6.1, Homebrew) and mutation checks:
+All opus host tests passed
+voice and sniffer tests passed
+..........
+----------------------------------------------------------------------
+Ran 11 tests in 0.033s
+OK
+Killed: src/opus_voice.cpp: static_cast<int64_t>(arrival) <= depth_us +
+Killed: src/opus_voice.cpp: if (length != size - header_size || length > max_packet_size)
+Killed: src/opus_voice.cpp: if (position < lookahead)
+Killed: src/opus_voice.cpp: (crc >> 1) ^ (0xEDB88320u
+Killed: src/opus_voice.cpp: ((3 * u * u) << 32) / 1280000
+Killed: src/opus_player.cpp: return tried ? outcome::decode_failed : outcome::concealed;
+Killed: src/opus_player.cpp: const bool use = depth_us == in_order ?
+Killed: tools/analyse_capture.py: if plain else not seen
+Killed: tools/analyse_capture.py: with_packet == len(voice) > 0
+Killed: tools/analyse_capture.py: len(sent) == 3000 and matching == 3000
+Killed: src/voice.cpp: if (arrivals[s] == missing)
+Killed: src/sniff_frame.cpp: b[pos + 5] == 4
+Killed: tools/analyse_capture.py: not marked and not collisions
+Killed: tools/analyse_capture.py: completeness >= .95
+Killed: tools/analyse_capture.py: for f in unique_sent:
+Killed: tools/analyse_capture.py: not any(len(v) > 1 for v in by_header.values())
+
+PlatformIO build results (clean build, 0 warnings):
+board1         SUCCESS   00:00:08.378
+board2         SUCCESS   00:00:08.209
+board1-plain   SUCCESS   00:00:08.359
+board2-plain   SUCCESS   00:00:08.741
+board3-sniff   SUCCESS   00:00:04.304
+
+34 inherited files byte-identical to stage 5 (e2e_voice_test).
+Changed from stage 5: src/radio.cpp (esp_wifi_set_ps(WIFI_PS_NONE) + log line),
+include/network_config.h (channel 1 -> 11).
+codec.h/codec.cpp: codec_sdtest plus codec_conceal only (0 lines removed from codec.cpp, 0 from codec.h).
+Sniffer links only: src/sniffer.cpp and src/sniff_frame.cpp (no crypto, key or session objects).
+.pio/build/board3-sniff/firmware.bin: no keys

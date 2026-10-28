@@ -1,0 +1,255 @@
+{
+  "capture": {
+    "queued_unique": 3706,
+    "captured_unique": 3706,
+    "matched_unique": 3706,
+    "completeness": 1.0,
+    "marker_hits": {
+      "HELLO SE19": 215,
+      "SE19OPUS": 2935,
+      "SE19ECHO": 586,
+      "SE19FILL": 586
+    },
+    "marker_frame_fraction": 1.0,
+    "retransmissions": 30,
+    "unlogged_frames": 0,
+    "same_header_different_frames": 0,
+    "repeated_marker_ciphertext_across_counters": 3492,
+    "clear_headers": [
+      [
+        1,
+        1,
+        2
+      ],
+      [
+        2,
+        1,
+        2
+      ],
+      [
+        2,
+        2,
+        1
+      ]
+    ],
+    "clear_counter_range": [
+      1,
+      3214
+    ],
+    "opus_packets_sent": 130,
+    "opus_voice_frames_captured": 2935,
+    "opus_frames_with_sent_packet": 2935,
+    "opus_distinct_packets_on_air": 130,
+    "pass": true
+  },
+  "latency": {
+    "seal_us": {
+      "n": 2912,
+      "min": 4,
+      "median": 4,
+      "p99": 5,
+      "max": 8
+    },
+    "open_us": {
+      "n": 2912,
+      "min": 1,
+      "median": 2,
+      "p99": 4,
+      "max": 5
+    },
+    "rtt_us": {
+      "n": 575,
+      "min": 10047,
+      "median": 30151,
+      "p99": 1050191,
+      "max": 1256158
+    },
+    "estimated_one_way_us": {
+      "n": 575,
+      "min": 5023.5,
+      "median": 15075.5,
+      "p99": 525095.5,
+      "max": 628079.0
+    },
+    "seal_interval_percent": {
+      "n": 2912,
+      "min": 0.02,
+      "median": 0.02,
+      "p99": 0.025,
+      "max": 0.04
+    },
+    "open_interval_percent": {
+      "n": 2912,
+      "min": 0.005,
+      "median": 0.01,
+      "p99": 0.02,
+      "max": 0.025
+    },
+    "jitter_us": 11670.223098452736,
+    "playout": {
+      "20000": {
+        "on_time": 2474,
+        "late": 438,
+        "lost": 88,
+        "late_lost_fraction": 0.17533333333333334
+      },
+      "40000": {
+        "on_time": 2629,
+        "late": 283,
+        "lost": 88,
+        "late_lost_fraction": 0.12366666666666666
+      },
+      "60000": {
+        "on_time": 2659,
+        "late": 253,
+        "lost": 88,
+        "late_lost_fraction": 0.11366666666666667
+      },
+      "80000": {
+        "on_time": 2673,
+        "late": 239,
+        "lost": 88,
+        "late_lost_fraction": 0.109
+      }
+    },
+    "crypto_max_sum_us": 13,
+    "drops": [
+      "VOICE_DROPS timer 0 radio 0 encode 0 codec 0 play_log 0",
+      "VOICE_DROPS timer 0 radio 0 encode 0 codec 0 play_log 0",
+      "VOICE_DROPS timer 0 radio 0 encode 0 codec 0 play_log 0",
+      "VOICE_DROPS timer 0 radio 0 encode 0 codec 0 play_log 0"
+    ]
+  },
+  "integrity": {
+    "sent": 2912,
+    "received": 2912,
+    "matching_crc": 2912,
+    "mismatched_crc": 0,
+    "missing": 0,
+    "pass": false
+  },
+  "opus_timing": {
+    "generate_us": {
+      "n": 2912,
+      "min": 56,
+      "median": 474,
+      "p99": 595,
+      "max": 827
+    },
+    "encode_us": {
+      "n": 2912,
+      "min": 2845,
+      "median": 7070,
+      "p99": 7798,
+      "max": 8407
+    },
+    "capture_to_send_us": {
+      "n": 2912,
+      "min": 3670,
+      "median": 7758,
+      "p99": 8785,
+      "max": 9792
+    },
+    "decode_us": {
+      "n": 2659,
+      "min": 1889,
+      "median": 2555,
+      "p99": 3752,
+      "max": 4374
+    },
+    "conceal_us": {
+      "n": 341,
+      "min": 1354,
+      "median": 1427,
+      "p99": 5042,
+      "max": 5272
+    },
+    "play_lag_us": {
+      "n": 3000,
+      "min": 2111,
+      "median": 2490,
+      "p99": 2589,
+      "max": 3109
+    },
+    "live_outcomes": {
+      "decoded": 2659,
+      "concealed": 341
+    },
+    "frames_played": 3000,
+    "worst_codec_step_us": 8407,
+    "mouth_to_ear_us": {
+      "median": 107878.5,
+      "p99": 620221.5
+    },
+    "mouth_to_ear_terms": "20 ms frame + capture-to-send + RTT/2 + depth + play lag + decode"
+  },
+  "quality": {
+    "live": {
+      "depth": 60000,
+      "decoded": 2659,
+      "concealed": 341,
+      "decode_failed": 0,
+      "failed": 0,
+      "correlation": 0.9382,
+      "snr_db": 9.22,
+      "worst_window_snr_db": -0.0,
+      "windows": 60
+    },
+    "in_order": {
+      "depth": 4294967295,
+      "decoded": 2912,
+      "concealed": 88,
+      "decode_failed": 0,
+      "failed": 0,
+      "correlation": 0.9821,
+      "snr_db": 14.49,
+      "worst_window_snr_db": 1.93,
+      "windows": 60
+    },
+    "replay_20000": {
+      "depth": 20000,
+      "decoded": 2474,
+      "concealed": 526,
+      "decode_failed": 0,
+      "failed": 0,
+      "correlation": 0.898,
+      "snr_db": 7.11,
+      "worst_window_snr_db": -0.0,
+      "windows": 60
+    },
+    "replay_40000": {
+      "depth": 40000,
+      "decoded": 2629,
+      "concealed": 371,
+      "decode_failed": 0,
+      "failed": 0,
+      "correlation": 0.9323,
+      "snr_db": 8.83,
+      "worst_window_snr_db": -0.0,
+      "windows": 60
+    },
+    "replay_60000": {
+      "depth": 60000,
+      "decoded": 2659,
+      "concealed": 341,
+      "decode_failed": 0,
+      "failed": 0,
+      "correlation": 0.9382,
+      "snr_db": 9.22,
+      "worst_window_snr_db": -0.0,
+      "windows": 60
+    },
+    "replay_80000": {
+      "depth": 80000,
+      "decoded": 2673,
+      "concealed": 327,
+      "decode_failed": 0,
+      "failed": 0,
+      "correlation": 0.9404,
+      "snr_db": 9.36,
+      "worst_window_snr_db": -0.0,
+      "windows": 60
+    },
+    "live_missed": 0
+  }
+}

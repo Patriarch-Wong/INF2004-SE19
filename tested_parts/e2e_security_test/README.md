@@ -11,9 +11,9 @@ This project seals each message once in application code, at the source
 handset, and opens it only at the destination handset. ESP-NOW link
 encryption is off here, so every test exercises only the application layer.
 
-Status: stages 1–5 hardware-tested. Stages 1 and 2 run in this project;
+Status: stages 1–6 hardware-tested. Stages 1 and 2 run in this project;
 all six stage 1 steps and all three stage 2 attacker modes passed on
-2026-10-27. Stages 3–5 have their own projects, linked in the table below.
+2026-10-27. Stages 3–6 have their own projects, linked in the table below.
 
 | Stage | Boards | Covers | Status |
 | --- | --- | --- | --- |
@@ -22,6 +22,7 @@ all six stage 1 steps and all three stage 2 attacker modes passed on
 | 3 | 3 | Board 3 as relay without the end-to-end key; per-hop latency | Hardware-tested in [e2e_relay_test](../e2e_relay_test/); all tests pass |
 | 4 | 3 | Pairing (BOOT button or serial), keys in NVS, session keys | Hardware-tested in [e2e_pairing_test](../e2e_pairing_test/); six of seven tests pass, BOOT button partial |
 | 5 | 2–3 | Confidentiality capture, synthetic voice latency | Hardware-tested in [e2e_voice_test](../e2e_voice_test/): confidentiality controls pass; encrypted voice targets pass; plaintext baseline and buffer sweep complete |
+| 6 | 3 | Opus voice through the encrypted link, played and compared at the receiver | Hardware-tested in [e2e_opus_test](../e2e_opus_test/): packets intact, codec quality, real time, delay and confidentiality pass; 2.87% late at a 60 ms buffer misses the 1% target (sender radio waits for the channel) |
 
 ## Protected message format
 

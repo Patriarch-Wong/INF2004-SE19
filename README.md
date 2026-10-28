@@ -29,6 +29,7 @@ INF2004-SE19/
     │   └── wireless_stream/  H.264/AAC playback while receiving into RAM
     ├── codec_test/           Opus encode/store/decode round trip
     ├── codec_sdtest/         Opus + onboard SDMMC with reusable C/C++ APIs
+    ├── e2e_opus_test/        Stage 6 Opus voice over the encrypted link
     ├── e2e_voice_test/       Stage 5 synthetic voice and passive capture
     ├── e2e_pairing_test/     Pairing, pair keys in NVS, per-boot session keys
     ├── e2e_relay_test/       Relay forwards end-to-end messages without the key
@@ -97,12 +98,13 @@ its [README](esp32_s3n16r8_template/README.md).
 | [button_lcd_test](tested_parts/button_lcd_test/) | SD video playback with pause button; wireless A/V and streaming variants transfer with CRC32 verification |
 | [codec_test](tested_parts/codec_test/) | Three Opus hardware round trips passed over UART |
 | [codec_sdtest](tested_parts/codec_sdtest/) | Three Opus + SD hardware round trips passed |
+| [e2e_opus_test](tested_parts/e2e_opus_test/) | Stage 6 hardware-tested: 3,000/3,000 Opus packets intact over the encrypted link, 0.9989 correlation / 26.73 dB in order, slowest step 8.6 ms, mouth-to-ear median 110 ms, no Opus on the air; 2.87% late at 60 ms on a busy 2.4 GHz channel |
 | [e2e_voice_test](tested_parts/e2e_voice_test/) | Stage 5 hardware-tested: 100% passive capture, encrypted/plaintext confidentiality controls pass; 50 fps voice with 0.5% encrypted versus 1.6% plaintext late at 60 ms, zero loss; baseline and buffer sweep complete |
 | [e2e_pairing_test](tested_parts/e2e_pairing_test/) | Stage 4 hardware-tested: pairing with code comparison, pair keys in NVS, new session key per boot; old frames rejected after a receiver reboot, pairing MITM stopped; BOOT-button pairing partial |
 | [e2e_relay_test](tested_parts/e2e_relay_test/) | Stage 3 hardware-tested: relay forwards without the pair key, no direct path, tampering relay rejected end to end; relaying adds ~3.2 ms per message |
 | [e2e_security_test](tested_parts/e2e_security_test/) | Stages 1–2 hardware-tested: two-way encrypted exchange, tamper, forge, replay, sender reboot, impersonation and over-the-air attacker all pass |
 | [espnow_test](tested_parts/espnow_test/) | Two-way reception confirmed; unknown-device rejection not tested |
-| [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | All four environments build; hardware tests pending |
+| [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | Hardware-tested: encrypted two-way exchange; wrong-key and plaintext senders rejected; recovery after restore |
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
 | [lora_test](tested_parts/lora_test/) | Hardware PING/PONG confirmed; latest fix awaits hardware retest |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
