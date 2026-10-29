@@ -3,12 +3,8 @@
 #include <SPI.h>
 #include "app_config.h"
 
-// MANUAL DEVICE ROLE: change this value before uploading to each board.
-// 1 = device A: sends PING and waits for PONG.
-// 0 = device B: listens for PING and sends PONG.
-// Use the default PlatformIO environment for both boards (no -e needed).
-#define LORA_INITIATOR 1
-static_assert(LORA_INITIATOR == 0 || LORA_INITIATOR == 1, "Invalid LoRa role");
+static_assert(AppConfig::broadcastJitterMs > 0,
+              "Broadcast jitter must be positive");
 
 namespace {
 LR1121 radio = new Module(AppConfig::csPin, AppConfig::irqPin,
@@ -30,11 +26,23 @@ const Module::RfSwitchMode_t rfSwitchTable[] = {
     END_OF_MODE_TABLE,
 };
 bool ready = false;
-uint32_t sequence = 0, sent = 0, replies = 0, timeouts = 0, txErrors = 0;
-uint32_t received = 0, lastPingMs = 0, lastStatusMs = 0, session = 0;
+int16_t lastRadioError = RADIOLIB_ERR_NONE;
+const char* lastRadioOperation = "radio setup";
+uint32_t sequence = 0, sent = 0, txErrors = 0;
+uint32_t received = 0, lastStatusMs = 0, session = 0;
+uint32_t last_broadcast_ms = 0;
+uint32_t broadcast_wait_ms = 0;
+constexpr char broadcastPrefix[] = "LORA_BROADCAST:";
+// Prefix + up to 8 session digits + ':' + 10 sequence digits + ':'.
+static_assert(sizeof(broadcastPrefix) - 1 + 8 + 1 + 10 + 1 +
+                  sizeof(AppConfig::broadcastText) - 1 <=
+                  RADIOLIB_LR11X0_MAX_PACKET_LENGTH,
+              "Broadcast text exceeds the LoRa packet limit");
 
 bool check(int16_t state, const char* operation) {
   if (state == RADIOLIB_ERR_NONE) return true;
+  lastRadioError = state;
+  lastRadioOperation = operation;
   Serial.printf("ERROR %s: RadioLib code %d\n", operation, state);
   return false;
 }
@@ -49,7 +57,7 @@ int16_t receiveText(String& packet, uint32_t timeoutMs) {
   // TX sets the chip's PayloadLen to the transmitted size. In explicit RX
   // that same field is a maximum, and RadioLib 7.7.1 does not restore it.
   // Reset it to 255 before RX so growth at sequence 9->10 (or 99->100)
-  // is accepted after transmitting a shorter reply.
+  // is accepted after transmitting a shorter packet.
   int16_t state = radio.standby();
   if (state != RADIOLIB_ERR_NONE) return state;
   state = radio.explicitHeader();
@@ -69,78 +77,78 @@ int16_t receiveText(String& packet, uint32_t timeoutMs) {
   return state;
 }
 
-void ping() {
-  // A random boot token prevents accepting a reply from an earlier session.
-  String token = String(session, HEX) + ":" + String(++sequence);
-  String packet = "LORA_TEST:PING:" + token;
-  String expected = "LORA_TEST:PONG:" + token;
-  const uint32_t startedAt = millis();
-  Serial.printf("TX %s\n", packet.c_str());
-  if (!check(radio.transmit(packet), "transmit PING")) {
-    ++txErrors;
-    return;
-  }
-  ++sent;
-  const uint32_t waitStartedAt = millis();
-  bool matched = false;
-  while (true) {
-    const uint32_t elapsed = millis() - waitStartedAt;
-    if (elapsed >= AppConfig::replyTimeoutMs) break;
-    String reply;
-    int16_t state = receiveText(reply, AppConfig::replyTimeoutMs - elapsed);
-    if (state == RADIOLIB_ERR_RX_TIMEOUT) break;
-    if (!check(state, "receive PONG")) continue;
-    logPacket(reply);
-    if (reply == expected) {
-      ++replies;
-      matched = true;
-      Serial.printf("PASS round trip %lu ms\n", static_cast<unsigned long>(millis() - startedAt));
-      break;
+void broadcast()
+{
+    const String packet = String(broadcastPrefix) + String(session, HEX) +
+                          ":" + String(++sequence) + ":" +
+                          AppConfig::broadcastText;
+    Serial.printf("TX %s\n", packet.c_str());
+    if (check(radio.transmit(packet.c_str()), "transmit broadcast"))
+    {
+        ++sent;
     }
-    Serial.println("Ignoring unrelated/stale packet.");
-  }
-  if (!matched) {
-    ++timeouts;
-    Serial.println("TIMEOUT: no matching PONG; check device B and antennas.");
-  }
-  Serial.printf("Stats: sent=%lu replies=%lu timeouts=%lu tx_errors=%lu success=%.1f%%\n",
-                static_cast<unsigned long>(sent), static_cast<unsigned long>(replies),
-                static_cast<unsigned long>(timeouts), static_cast<unsigned long>(txErrors),
-                100.0f * replies / sent);
+    else
+    {
+        ++txErrors;
+    }
+    Serial.printf("Stats: sent=%lu tx_errors=%lu (no replies requested)\n",
+                  static_cast<unsigned long>(sent),
+                  static_cast<unsigned long>(txErrors));
 }
 
-void respond() {
-  String packet;
-  int16_t state = receiveText(packet, 1000);
-  if (state == RADIOLIB_ERR_RX_TIMEOUT) {
-    if (millis() - lastStatusMs >= 10000) {
-      lastStatusMs = millis();
-      Serial.println("Listening for device A...");
+void listen_for_broadcast(uint32_t timeout_ms)
+{
+    String packet;
+    const int16_t state = receiveText(packet, timeout_ms);
+    if (state == RADIOLIB_ERR_RX_TIMEOUT)
+    {
+        if (millis() - lastStatusMs >= 10000)
+        {
+            lastStatusMs = millis();
+            Serial.println("Listening for broadcasts...");
+        }
+        return;
     }
-    return;
-  }
-  if (!check(state, "receive PING")) return;
-  logPacket(packet);
-  const String prefix = "LORA_TEST:PING:";
-  if (!packet.startsWith(prefix) || packet.length() <= prefix.length()) return;
-  ++received;
-  String reply = "LORA_TEST:PONG:" + packet.substring(prefix.length());
-  // Give A time to switch from TX to RX before starting the reply preamble.
-  delay(AppConfig::replyDelayMs);
-  if (check(radio.transmit(reply), "transmit PONG")) {
-    ++replies;
-    Serial.printf("TX %s | received=%lu replied=%lu\n", reply.c_str(),
-                  static_cast<unsigned long>(received), static_cast<unsigned long>(replies));
-  }
+    if (!check(state, "receive broadcast"))
+    {
+        return;
+    }
+    if (!packet.startsWith(broadcastPrefix) ||
+        packet.length() <= sizeof(broadcastPrefix) - 1)
+    {
+        return;
+    }
+    logPacket(packet);
+    ++received;
+    Serial.printf("Broadcasts received=%lu\n",
+                  static_cast<unsigned long>(received));
+    // Receiving a broadcast never triggers a reply.
 }
+
+void broadcast_node()
+{
+    const uint32_t elapsed_ms = millis() - last_broadcast_ms;
+    if (elapsed_ms >= broadcast_wait_ms)
+    {
+        broadcast();
+        last_broadcast_ms = millis();
+        broadcast_wait_ms = AppConfig::broadcastIntervalMs +
+                            esp_random() % AppConfig::broadcastJitterMs;
+        return;
+    }
+    // Bound RX by the next send time, preserving each node's random offset.
+    const uint32_t remaining_ms = broadcast_wait_ms - elapsed_ms;
+    listen_for_broadcast(remaining_ms < 1000 ? remaining_ms : 1000);
+}
+
 }  // namespace
 
 void setup() {
   Serial.begin(AppConfig::serialBaud);
   const uint32_t startedAt = millis();
   while (!Serial && millis() - startedAt < AppConfig::serialWaitMs) delay(10);
-  Serial.printf("\n%s\nDevice %s\n", AppConfig::projectName,
-                LORA_INITIATOR ? "A (PING initiator)" : "B (PONG responder)");
+  Serial.printf("\n%s\nDevice broadcast node (send and receive)\n",
+                AppConfig::projectName);
   Serial.printf("Flash: %u bytes | PSRAM: %u bytes\n", ESP.getFlashChipSize(), ESP.getPsramSize());
   if (ESP.getFlashChipSize() != AppConfig::expectedFlashBytes ||
       !psramFound() || ESP.getPsramSize() != AppConfig::expectedPsramBytes) {
@@ -162,8 +170,9 @@ void setup() {
   if (!check(radio.setOutputPower(AppConfig::txPowerDbm, true), "select HP antenna path")) return;
   if (!check(radio.setCRC(2), "enable CRC")) return;
   session = esp_random();
+  last_broadcast_ms = millis();
+  broadcast_wait_ms = 1 + esp_random() % AppConfig::broadcastJitterMs;
   ready = true;
-  lastPingMs = millis() - AppConfig::pingIntervalMs;
   Serial.printf("Radio ready: %.3f MHz | BW %.0f kHz | SF%u | CR4/%u | %d dBm\n",
                 AppConfig::frequencyMHz, AppConfig::bandwidthKHz,
                 AppConfig::spreadingFactor, AppConfig::codingRate, AppConfig::txPowerDbm);
@@ -171,17 +180,12 @@ void setup() {
 
 void loop() {
   if (!ready) {
-    Serial.println("Radio stopped. Check 3.3V/GND, SPI, RESET=16, BUSY=17, IRQ=18; then reset.");
+    Serial.printf("Radio stopped: %s failed (RadioLib code %d).\n",
+                  lastRadioOperation, lastRadioError);
+    Serial.println("Check radio 3.3V/GND, SPI, RESET GPIO16, BUSY GPIO17, IRQ GPIO18; then tap the ESP32 EN/RST button with BOOT released.");
     delay(5000);
     return;
   }
-  if (LORA_INITIATOR) {
-    if (millis() - lastPingMs >= AppConfig::pingIntervalMs) {
-      lastPingMs = millis();
-      ping();
-    }
-  } else {
-    respond();
-  }
+  broadcast_node();
   delay(1);
 }
