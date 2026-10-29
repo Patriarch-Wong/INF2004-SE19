@@ -1,0 +1,747 @@
+{
+ "booted": {
+  "board1": true,
+  "board2": true,
+  "relay": true
+ },
+ "radio": {
+  "board1": [
+   [
+    4.95,
+    11,
+    1,
+    "default"
+   ],
+   [
+    8.16,
+    11,
+    6,
+    "ok"
+   ]
+  ],
+  "board2": [
+   [
+    2.94,
+    11,
+    1,
+    "default"
+   ],
+   [
+    8.13,
+    11,
+    6,
+    "ok"
+   ]
+  ],
+  "relay": [
+   [
+    0.31,
+    11,
+    1,
+    "default"
+   ],
+   [
+    8.19,
+    11,
+    6,
+    "ok"
+   ]
+  ]
+ },
+ "checks": {
+  "R1_relay_path": {
+   "accepted_frames": 14932,
+   "accepted_without_relay_forward": 0,
+   "rejected_not_via_relay": 0,
+   "relay_holds_no_pair_key": true,
+   "pass": true
+  },
+  "R2_sessions": {
+   "per_handset": {
+    "1": {
+     "sessions_with_peer": [
+      "1DF6EFF4"
+     ],
+     "text_frames_accepted": 266
+    },
+    "2": {
+     "sessions_with_peer": [
+      "1DF6EFF4",
+      "CFD3A199"
+     ],
+     "text_frames_accepted": 266
+    }
+   },
+   "shared_session_ids": [
+    "1DF6EFF4"
+   ],
+   "pass": true
+  },
+  "R3_one_way": {
+   "directions": [
+    "1->2",
+    "2->1"
+   ],
+   "pass": true
+  },
+  "R4_two_way": {
+   "directions": [
+    "1->2",
+    "2->1"
+   ],
+   "pass": true
+  },
+  "R5_pipelines": {
+   "per_handset": {
+    "1": {
+     "drops": {
+      "timer": 0,
+      "radio": 0,
+      "encode": 0,
+      "codec": 0,
+      "play_log": 0
+     },
+     "capture_to_send_us": {
+      "count": 6000,
+      "min": 3488,
+      "median": 7798,
+      "p99": 12106,
+      "max": 16809
+     },
+     "pass": true
+    },
+    "2": {
+     "drops": {
+      "timer": 0,
+      "radio": 0,
+      "encode": 0,
+      "codec": 0,
+      "play_log": 0
+     },
+     "capture_to_send_us": {
+      "count": 6000,
+      "min": 3593,
+      "median": 7771,
+      "p99": 12837,
+      "max": 17622
+     },
+     "pass": true
+    }
+   },
+   "pass": true
+  },
+  "R6_relay": {
+   "status": {
+    "forwarded": 14952,
+    "no_ack": 2,
+    "send_errors": 0,
+    "dropped": 0,
+    "pairing_ignored": 0,
+    "queue_drops": 0,
+    "unknown_mac_drops": 0
+   },
+   "forward_results": {
+    "ok": 14953,
+    "noack": 2
+   },
+   "drops": {},
+   "relay_us_ok": {
+    "count": 14953,
+    "min": 1057,
+    "median": 4696,
+    "p99": 61196,
+    "max": 97751
+   },
+   "pass": true
+  }
+ },
+ "streams": [
+  {
+   "id": "C4DB0731",
+   "from": 1,
+   "to": 2,
+   "start_s": 12.2,
+   "end_s": 72.65,
+   "sent": 3000,
+   "send_failed": 0,
+   "tx_report": {
+    "sent": 3000,
+    "send_errors": 0,
+    "build_errors": 0,
+    "echoes": 600
+   },
+   "sender_timing_us": {
+    "generate": {
+     "count": 3000,
+     "min": 55,
+     "median": 492,
+     "p99": 648,
+     "max": 942
+    },
+    "encode": {
+     "count": 3000,
+     "min": 2830,
+     "median": 7055,
+     "p99": 7985,
+     "max": 8477
+    },
+    "capture_to_send": {
+     "count": 3000,
+     "min": 3488,
+     "median": 7773,
+     "p99": 9110,
+     "max": 9948
+    }
+   },
+   "rtt_us": {
+    "count": 600,
+    "min": 9982,
+    "median": 46088,
+    "p99": 113547,
+    "max": 164054
+   },
+   "relay": {
+    "voice_forwards": 3000,
+    "results": {
+     "ok": 3000
+    },
+    "relay_us": {
+     "count": 3000,
+     "min": 1147,
+     "median": 5941,
+     "p99": 59812,
+     "max": 80128
+    }
+   },
+   "received": 3000,
+   "crc_matched": 3000,
+   "crc_mismatched": 0,
+   "received_not_sent": 0,
+   "rx_report": {
+    "received": 3000,
+    "duplicates": 0,
+    "reordered": 0,
+    "foreign": 0,
+    "stale": 0,
+    "wrong_frames": 0,
+    "played": 3000,
+    "abandoned": false
+   },
+   "playout": {
+    "60000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 11914
+    },
+    "100000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 11914
+    },
+    "150000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 11914
+    },
+    "200000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 11914
+    },
+    "300000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 11914
+    }
+   },
+   "quality": {
+    "live": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    },
+    "in_order": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    }
+   },
+   "live_missed": 0,
+   "play_outcomes": {
+    "0": 3000
+   },
+   "decode_us": {
+    "count": 3000,
+    "min": 1898,
+    "median": 2556,
+    "p99": 4022,
+    "max": 5735
+   },
+   "play_lag_us": {
+    "count": 3000,
+    "min": 2154,
+    "median": 2158,
+    "p99": 2239,
+    "max": 2515
+   },
+   "pass": true,
+   "failures": [],
+   "two_way": false
+  },
+  {
+   "id": "7FCC24B4",
+   "from": 1,
+   "to": 2,
+   "start_s": 178.17,
+   "end_s": 238.58,
+   "sent": 3000,
+   "send_failed": 0,
+   "tx_report": {
+    "sent": 3000,
+    "send_errors": 0,
+    "build_errors": 0,
+    "echoes": 600
+   },
+   "sender_timing_us": {
+    "generate": {
+     "count": 3000,
+     "min": 50,
+     "median": 466,
+     "p99": 831,
+     "max": 1574
+    },
+    "encode": {
+     "count": 3000,
+     "min": 2889,
+     "median": 7139,
+     "p99": 10230,
+     "max": 12135
+    },
+    "capture_to_send": {
+     "count": 3000,
+     "min": 3632,
+     "median": 7863,
+     "p99": 13260,
+     "max": 16809
+    }
+   },
+   "rtt_us": {
+    "count": 600,
+    "min": 12684,
+    "median": 54211,
+    "p99": 170428,
+    "max": 233392
+   },
+   "relay": {
+    "voice_forwards": 3600,
+    "results": {
+     "ok": 3600
+    },
+    "relay_us": {
+     "count": 3600,
+     "min": 1171,
+     "median": 5140,
+     "p99": 64703,
+     "max": 89010
+    }
+   },
+   "received": 3000,
+   "crc_matched": 3000,
+   "crc_mismatched": 0,
+   "received_not_sent": 0,
+   "rx_report": {
+    "received": 3000,
+    "duplicates": 0,
+    "reordered": 0,
+    "foreign": 0,
+    "stale": 0,
+    "wrong_frames": 0,
+    "played": 3000,
+    "abandoned": false
+   },
+   "playout": {
+    "60000": {
+     "on_time": 2973,
+     "late": 27,
+     "lost": 0,
+     "jitter_us": 17125
+    },
+    "100000": {
+     "on_time": 2995,
+     "late": 5,
+     "lost": 0,
+     "jitter_us": 17125
+    },
+    "150000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 17125
+    },
+    "200000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 17125
+    },
+    "300000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 17125
+    }
+   },
+   "quality": {
+    "live": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    },
+    "in_order": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    }
+   },
+   "live_missed": 0,
+   "play_outcomes": {
+    "0": 3000
+   },
+   "decode_us": {
+    "count": 3000,
+    "min": 2317,
+    "median": 3572,
+    "p99": 5045,
+    "max": 5967
+   },
+   "play_lag_us": {
+    "count": 3000,
+    "min": 2013,
+    "median": 6539,
+    "p99": 9722,
+    "max": 11173
+   },
+   "pass": true,
+   "failures": [],
+   "two_way": true
+  },
+  {
+   "id": "927AAEC6",
+   "from": 2,
+   "to": 1,
+   "start_s": 95.19,
+   "end_s": 155.61,
+   "sent": 3000,
+   "send_failed": 0,
+   "tx_report": {
+    "sent": 3000,
+    "send_errors": 0,
+    "build_errors": 0,
+    "echoes": 600
+   },
+   "sender_timing_us": {
+    "generate": {
+     "count": 3000,
+     "min": 54,
+     "median": 491,
+     "p99": 604,
+     "max": 951
+    },
+    "encode": {
+     "count": 3000,
+     "min": 2835,
+     "median": 7034,
+     "p99": 8034,
+     "max": 9152
+    },
+    "capture_to_send": {
+     "count": 3000,
+     "min": 3593,
+     "median": 7759,
+     "p99": 9355,
+     "max": 10814
+    }
+   },
+   "rtt_us": {
+    "count": 600,
+    "min": 10058,
+    "median": 41312,
+    "p99": 110084,
+    "max": 153375
+   },
+   "relay": {
+    "voice_forwards": 3000,
+    "results": {
+     "ok": 3000
+    },
+    "relay_us": {
+     "count": 3000,
+     "min": 1145,
+     "median": 3087,
+     "p99": 54193,
+     "max": 71928
+    }
+   },
+   "received": 3000,
+   "crc_matched": 3000,
+   "crc_mismatched": 0,
+   "received_not_sent": 0,
+   "rx_report": {
+    "received": 3000,
+    "duplicates": 0,
+    "reordered": 0,
+    "foreign": 0,
+    "stale": 0,
+    "wrong_frames": 0,
+    "played": 3000,
+    "abandoned": false
+   },
+   "playout": {
+    "60000": {
+     "on_time": 2953,
+     "late": 47,
+     "lost": 0,
+     "jitter_us": 18358
+    },
+    "100000": {
+     "on_time": 2997,
+     "late": 3,
+     "lost": 0,
+     "jitter_us": 18358
+    },
+    "150000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 18358
+    },
+    "200000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 18358
+    },
+    "300000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 18358
+    }
+   },
+   "quality": {
+    "live": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    },
+    "in_order": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    }
+   },
+   "live_missed": 0,
+   "play_outcomes": {
+    "0": 3000
+   },
+   "decode_us": {
+    "count": 3000,
+    "min": 1896,
+    "median": 2556,
+    "p99": 4170,
+    "max": 5393
+   },
+   "play_lag_us": {
+    "count": 3000,
+    "min": 2162,
+    "median": 2165,
+    "p99": 2387,
+    "max": 2556
+   },
+   "pass": true,
+   "failures": [],
+   "two_way": false
+  },
+  {
+   "id": "1349F354",
+   "from": 2,
+   "to": 1,
+   "start_s": 178.63,
+   "end_s": 239.14,
+   "sent": 3000,
+   "send_failed": 0,
+   "tx_report": {
+    "sent": 3000,
+    "send_errors": 0,
+    "build_errors": 0,
+    "echoes": 600
+   },
+   "sender_timing_us": {
+    "generate": {
+     "count": 3000,
+     "min": 51,
+     "median": 461,
+     "p99": 822,
+     "max": 1209
+    },
+    "encode": {
+     "count": 3000,
+     "min": 2841,
+     "median": 7096,
+     "p99": 10231,
+     "max": 12094
+    },
+    "capture_to_send": {
+     "count": 3000,
+     "min": 3691,
+     "median": 7822,
+     "p99": 13819,
+     "max": 17622
+    }
+   },
+   "rtt_us": {
+    "count": 600,
+    "min": 10993,
+    "median": 51093,
+    "p99": 181557,
+    "max": 244272
+   },
+   "relay": {
+    "voice_forwards": 3601,
+    "results": {
+     "ok": 3601
+    },
+    "relay_us": {
+     "count": 3601,
+     "min": 1116,
+     "median": 5631,
+     "p99": 62768,
+     "max": 96182
+    }
+   },
+   "received": 3000,
+   "crc_matched": 3000,
+   "crc_mismatched": 0,
+   "received_not_sent": 0,
+   "rx_report": {
+    "received": 3000,
+    "duplicates": 0,
+    "reordered": 0,
+    "foreign": 0,
+    "stale": 0,
+    "wrong_frames": 0,
+    "played": 3000,
+    "abandoned": false
+   },
+   "playout": {
+    "60000": {
+     "on_time": 2851,
+     "late": 149,
+     "lost": 0,
+     "jitter_us": 15928
+    },
+    "100000": {
+     "on_time": 2991,
+     "late": 9,
+     "lost": 0,
+     "jitter_us": 15928
+    },
+    "150000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 15928
+    },
+    "200000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 15928
+    },
+    "300000": {
+     "on_time": 3000,
+     "late": 0,
+     "lost": 0,
+     "jitter_us": 15928
+    }
+   },
+   "quality": {
+    "live": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    },
+    "in_order": {
+     "decoded": 3000,
+     "concealed": 0,
+     "decode_failed": 0,
+     "failed": 0,
+     "corr": 0.9989,
+     "snr_db": 26.73,
+     "worst_window_db": 25.04
+    }
+   },
+   "live_missed": 0,
+   "play_outcomes": {
+    "0": 3000
+   },
+   "decode_us": {
+    "count": 3000,
+    "min": 1895,
+    "median": 3541,
+    "p99": 4997,
+    "max": 6401
+   },
+   "play_lag_us": {
+    "count": 3000,
+    "min": 2103,
+    "median": 6250,
+    "p99": 9383,
+    "max": 11280
+   },
+   "pass": true,
+   "failures": [],
+   "two_way": true
+  }
+ ],
+ "handset_rejects": {
+  "1": {
+   "replay": 10
+  },
+  "2": {}
+ },
+ "pass": true
+}
