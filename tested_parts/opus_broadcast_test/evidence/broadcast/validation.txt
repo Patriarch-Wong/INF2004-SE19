@@ -1,0 +1,59 @@
+Broadcast local validation — 2026-10-29 (final code, after the hardware run)
+No uploads performed by the agent.
+
+Host suites (system libopus 1.6.1, Homebrew):
+All opus host tests passed
+All broadcast host tests passed
+All broadcast player host tests passed
+............
+----------------------------------------------------------------------
+Ran 12 tests in 2.073s
+
+OK
+
+Mutation checks:
+Killed: src/broadcast_receiver.cpp:         return source::redundant;
+Killed: src/broadcast_receiver.cpp: if (opus_voice::on_time(primary_arrival, sequence, anchor, depth_us,
+Killed: src/broadcast_receiver.cpp: store(fields.sequence - 1, false
+Killed: src/broadcast_receiver.cpp: fields.stream_id == id &&
+Killed: src/broadcast_receiver.cpp: fields.sender == from &&
+Killed: src/broadcast_receiver.cpp: if (fields.stream_id == last_id)
+Killed: src/broadcast_receiver.cpp: if (fields.frames != slots.frames)
+Killed: src/broadcast_receiver.cpp: const bool first = !slots.seen[sequence];
+Killed: src/broadcast_receiver.cpp: if (slots.seen[sequence] & kind)
+Killed: src/broadcast_frame.cpp: previous_size != rest - 2
+Killed: src/broadcast_frame.cpp: return rest ? parse_result::bad_length : parse_result::ok;
+Killed: src/broadcast_frame.cpp: header_size + packet_size > size
+Killed: src/broadcast_frame.cpp: (flags & ~flag_previous) ||
+Killed: src/broadcast_frame.cpp: (!fields.sequence || !valid_packet(previous_size))
+Killed: src/broadcast_frame.cpp: fields.sequence < fields.frames
+Killed: tools/analyse_broadcast.py: if c['crc'] != sent_crc.get(c['sequence']):
+Killed: tools/analyse_broadcast.py: lost = sorted(set(range(FRAMES)) - set(primary))
+Killed: tools/analyse_broadcast.py: if lengths and s == end + 1:
+Killed: tools/analyse_broadcast.py: unrecovered_next = [s for s in next_arrived if s not in earliest]
+Killed: tools/analyse_broadcast.py: v['no_copy_fraction'] < .005
+Killed: tools/analyse_broadcast.py: both, one = a & b, a ^ b
+Killed: tools/analyse_broadcast.py: v['live_missed'] == 0 and v['live_matches_log']
+Killed: tools/analyse_broadcast.py: wrong_slots = sum(p['source'] != expected.get(p['sequence'])
+Killed: tools/analyse_broadcast.py: step_ok=max(steps) <= STEP_LIMIT_US
+
+PlatformIO build (clean):
+warnings: 0
+RAM:   [==        ]  17.2% (used 56204 bytes from 327680 bytes)
+Flash: [=         ]  13.5% (used 884905 bytes from 6553600 bytes)
+========================= [SUCCESS] Took 1.16 seconds =========================
+
+Files byte-identical to e2e_opus_test:
+same include/codec.h
+same src/codec.cpp
+same include/opus_voice.h
+same src/opus_voice.cpp
+same include/opus_player.h
+same src/opus_player.cpp
+same src/heap_owner.h
+same tools/capture_logs.py
+same partitions.csv
+same .gitignore
+same tests/opus_test.cpp
+same tests/test_check.h
+same tests/host/esp_heap_caps.h

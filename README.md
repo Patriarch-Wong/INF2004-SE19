@@ -38,7 +38,8 @@ INF2004-SE19/
     ├── espnow_encrypt_test/  espnow_test with CCMP encryption (PMK + LMK)
     ├── espnow_sd_test/       One-way ESP-NOW transfer saved and verified on SD
     ├── lora_test/            Core1121 868 MHz LoRa PING/PONG
-    └── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
+    ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
+    └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
 ```
 
 Every directory containing a `platformio.ini` is an independent project with
@@ -108,6 +109,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
 | [lora_test](tested_parts/lora_test/) | Hardware PING/PONG confirmed; latest fix awaits hardware retest |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
+| [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 
 Detailed logs and measurements are in each project's README and `results/`
 directory.
