@@ -1,0 +1,14 @@
+All opus host tests passed
+All broadcast host tests passed
+All broadcast player host tests passed
+............
+----------------------------------------------------------------------
+Ran 12 tests in 2.121s
+
+OK
+Group crypto: two receivers, wrong keys, tampering, truncation, MAC binding and replay passed
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.766s
+
+OK

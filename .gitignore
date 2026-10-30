@@ -109,3 +109,6 @@ flash_encryption_key*.bin
 # Local AI assistant settings
 .claude/
 CLAUDE.local.md
+
+# Local list of open test issues; not tracked.
+/TRACKING.md
