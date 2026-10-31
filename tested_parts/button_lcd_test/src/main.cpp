@@ -36,6 +36,8 @@ uint32_t decoded_frames = 0;
 uint32_t skipped_frames = 0;
 uint32_t completed_loops = 0;
 uint32_t maximum_decode_us = 0;
+uint32_t streamed_frames = 0;
+uint32_t maximum_stream_us = 0;
 char command[128] = {};
 size_t command_length = 0;
 bool command_overflow = false;
@@ -259,6 +261,52 @@ void tick_video()
     maximum_decode_us = max(maximum_decode_us, elapsed_us);
 }
 
+// Decodes one JPEG sent over serial straight to the LCD; needs no SD card.
+void show_streamed_frame(uint32_t length)
+{
+    video.close();
+    if (length < 4 || length > frame_capacity)
+    {
+        Serial.println("ERROR bad frame length");
+        return;
+    }
+    if (Serial.readBytes(frame, length) != length)
+    {
+        Serial.println("ERROR frame interrupted");
+        return;
+    }
+    const uint32_t started_us = micros();
+    uint16_t width = 0;
+    uint16_t height = 0;
+    if (TJpgDec.getJpgSize(&width, &height, frame, length) != JDR_OK ||
+        width == 0 || width > lcd.width() || height == 0 ||
+        height > lcd.height())
+    {
+        Serial.println("ERROR bad JPEG size");
+        return;
+    }
+    if (streamed_frames == 0)
+    {
+        lcd.fillScreen(ST77XX_BLACK);
+    }
+    JRESULT result = JDR_OK;
+    {
+        const lcd_transaction transaction;
+        result = TJpgDec.drawJpg((lcd.width() - width) / 2,
+                                (lcd.height() - height) / 2, frame, length);
+    }
+    if (result != JDR_OK)
+    {
+        Serial.println("ERROR JPEG decode failed");
+        return;
+    }
+    const uint32_t elapsed_us = micros() - started_us;
+    maximum_stream_us = max(maximum_stream_us, elapsed_us);
+    ++streamed_frames;
+    Serial.printf("SHOWN %lu %lu\n", static_cast<unsigned long>(streamed_frames),
+                  static_cast<unsigned long>(elapsed_us));
+}
+
 bool check_hash(const char *path, uint32_t size, const char *expected)
 {
     File file = SD_MMC.open(path, FILE_READ);
@@ -357,17 +405,33 @@ bool receive_video(uint32_t size, const char *expected_hash)
 
 void handle_command()
 {
+    if (std::strncmp(command, "frame ", 6) == 0)
+    {
+        unsigned long length = 0;
+        char trailing = '\0';
+        if (std::sscanf(command, "frame %lu %c", &length, &trailing) != 1)
+        {
+            Serial.println("ERROR expected frame <bytes>");
+            return;
+        }
+        show_streamed_frame(length);
+        return;
+    }
+    if (std::strcmp(command, "status") == 0)
+    {
+        Serial.println(mounted ? "SD READY CMD38 CLK39 D0=40" : "SD MISSING");
+        print_status();
+        Serial.printf("STREAM shown=%lu max_decode_us=%lu\n",
+                      static_cast<unsigned long>(streamed_frames),
+                      static_cast<unsigned long>(maximum_stream_us));
+        return;
+    }
     if (!mounted)
     {
         Serial.println("ERROR SD not mounted");
         return;
     }
-    if (std::strcmp(command, "status") == 0)
-    {
-        Serial.println("SD READY CMD38 CLK39 D0=40");
-        print_status();
-    }
-    else if (std::strcmp(command, "play") == 0)
+    if (std::strcmp(command, "play") == 0)
     {
         if (!play_video())
         {
@@ -476,6 +540,8 @@ void setup()
     digitalWrite(app_config::led_pin, LOW);
     pinMode(app_config::led_pin, OUTPUT);
     pinMode(app_config::button_pin, INPUT_PULLUP);
+    // Room for one queued streamed frame while the previous one decodes.
+    Serial.setRxBufferSize(frame_capacity + sizeof(command));
     Serial.begin(app_config::serial_baud);
     Serial.setTimeout(10000);
     SPI.begin(app_config::lcd_sclk_pin, -1, app_config::lcd_mosi_pin,
@@ -494,7 +560,7 @@ void setup()
                            app_config::sd_frequency_khz);
     if (!mounted)
     {
-        show_message("SD mount failed\nInsert FAT32 card");
+        show_message("No SD card\nStream over USB");
         Serial.println("ERROR SD mount");
     }
     else if (SD_MMC.exists(video_path))

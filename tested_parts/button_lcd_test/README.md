@@ -80,6 +80,18 @@ playback continues.
 Alternatively, copy `media/video.lcdv` to the root of the SD card with a
 card reader, then insert the card and reset the board.
 
+Without an SD card, stream the clip frame by frame instead:
+
+```sh
+python3 tools/stream_video.py --port PORT --loops 1
+```
+
+The sender paces frames at the clip's frame rate and keeps at most two
+in flight: one decoding, one queued in the board's serial buffer. Each
+`frame <bytes>` command is followed by one JPEG; the board decodes it
+straight to the LCD and replies `SHOWN <count> <decode_us>`. Overdue
+frames are skipped on the Mac. Nothing is stored on the board.
+
 For the native USB connector, upload the `esp32-s3-n16r8-usb` environment
 and pass its port to the sender. Both environments use 921600 baud.
 `pio device list` shows available ports.
