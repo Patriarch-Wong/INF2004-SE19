@@ -127,9 +127,13 @@ All 14,932 accepted data frames had corresponding relay forwarding records.
 
 There were two unacknowledged text forwards during staggered startup,
 before rate selection and voice testing, and ten replay rejections on board
-1. These did not cause missing voice packets; their underlying cause was
-not investigated in this run. This is one bench run, not a range or
-long-duration reliability test.
+1. A subsequent [trace audit](evidence/relay/run3_replay_investigation.md)
+accounts for all ten: each affected counter was sent once by board 2,
+forwarded twice by the relay, and accepted once by board 1. Replaying the
+forwarded counters through the actual replay window reproduces all ten
+rejections. The origin of duplicate radio delivery remains unconfirmed;
+the rejections did not cause missing voice packets. This is one bench run,
+not a range or long-duration reliability test.
 
 ### Reproduce the successful run
 

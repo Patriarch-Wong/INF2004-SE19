@@ -29,15 +29,17 @@ INF2004-SE19/
     │   └── wireless_stream/  H.264/AAC playback while receiving into RAM
     ├── codec_test/           Opus encode/store/decode round trip
     ├── codec_sdtest/         Opus + onboard SDMMC with reusable C/C++ APIs
+    ├── e2e_broadcast_test/   Encrypted one-to-many Opus broadcast, shared group key
     ├── e2e_opus_test/        Stage 6 Opus voice over the encrypted link
     ├── e2e_voice_test/       Stage 5 synthetic voice and passive capture
     ├── e2e_pairing_test/     Pairing, pair keys in NVS, per-boot session keys
     ├── e2e_relay_test/       Relay forwards end-to-end messages without the key
+    ├── e2e_relay_voice_test/ Two-way encrypted Opus voice through a relay
     ├── e2e_security_test/    End-to-end AES-GCM messages, replay window, relay hop tag
     ├── espnow_test/          Two-board ESP-NOW exchange with MAC whitelist
     ├── espnow_encrypt_test/  espnow_test with CCMP encryption (PMK + LMK)
     ├── espnow_sd_test/       One-way ESP-NOW transfer saved and verified on SD
-    ├── lora_test/            Core1121 868 MHz LoRa PING/PONG
+    ├── lora_test/            Core1121 868 MHz LoRa broadcast send and receive
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
     └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
 ```
@@ -50,7 +52,7 @@ measured results.
 
 | Component | Used in |
 | --- | --- |
-| ESP32-S3 N16R8 development board (x2 for radio tests) | All |
+| ESP32-S3 N16R8 development board (x3 for the `e2e_*` and broadcast tests; x2 for `espnow_*`, `mictospeaker_test`; x2 or more for `lora_test`) | All |
 | Onboard SD slot (1-bit SDMMC: CMD 38, CLK 39, D0 40) | `codec_sdtest`, `espnow_sd_test`, `button_lcd_test` |
 | 4-pin tactile pushbutton + LED with 330 Ω resistor | `button_test`, `button_lcd_test` |
 | ST7789 240 × 240 SPI LCD | `button_lcd_test` |
@@ -99,20 +101,43 @@ its [README](esp32_s3n16r8_template/README.md).
 | [button_lcd_test](tested_parts/button_lcd_test/) | SD video playback with pause button; wireless A/V and streaming variants transfer with CRC32 verification |
 | [codec_test](tested_parts/codec_test/) | Three Opus hardware round trips passed over UART |
 | [codec_sdtest](tested_parts/codec_sdtest/) | Three Opus + SD hardware round trips passed |
+| [e2e_broadcast_test](tested_parts/e2e_broadcast_test/) | Hardware-tested: board 1 broadcasts AES-GCM encrypted Opus to boards 2 and 3. Fails at 6 Mbps (up to 26.53% lost); passes at 1 Mbps with 2,997–3,000 of 3,000 frames per stream, 0 security rejects |
 | [e2e_opus_test](tested_parts/e2e_opus_test/) | Stage 6 hardware-tested: 3,000/3,000 Opus packets intact over the encrypted link, 0.9989 correlation / 26.73 dB in order, slowest step 8.6 ms, mouth-to-ear median 110 ms, no Opus on the air; 2.87% late at 60 ms on a busy 2.4 GHz channel |
 | [e2e_voice_test](tested_parts/e2e_voice_test/) | Stage 5 hardware-tested: 100% passive capture, encrypted/plaintext confidentiality controls pass; 50 fps voice with 0.5% encrypted versus 1.6% plaintext late at 60 ms, zero loss; baseline and buffer sweep complete |
 | [e2e_pairing_test](tested_parts/e2e_pairing_test/) | Stage 4 hardware-tested: pairing with code comparison, pair keys in NVS, new session key per boot; old frames rejected after a receiver reboot, pairing MITM stopped; BOOT-button pairing partial |
 | [e2e_relay_test](tested_parts/e2e_relay_test/) | Stage 3 hardware-tested: relay forwards without the pair key, no direct path, tampering relay rejected end to end; relaying adds ~3.2 ms per message |
+| [e2e_relay_voice_test](tested_parts/e2e_relay_voice_test/) | Hardware-tested at 6 Mbps: two-way voice between handsets 1 and 2 through relay board 3, 3,000/3,000 frames per stream including both directions at once, 0 late at 200 ms; fails two-way at 1 Mbps (relay queue drops). board 1's 10 replay rejects were duplicate relay forwards of already-accepted frames (radio cause unconfirmed) |
 | [e2e_security_test](tested_parts/e2e_security_test/) | Stages 1–2 hardware-tested: two-way encrypted exchange, tamper, forge, replay, sender reboot, impersonation and over-the-air attacker all pass |
-| [espnow_test](tested_parts/espnow_test/) | Two-way reception confirmed; unknown-device rejection not tested |
+| [espnow_test](tested_parts/espnow_test/) | Two-way reception confirmed; unknown-device rejection not tested with this firmware (tested in `e2e_security_test` stage 2) |
 | [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | Hardware-tested: encrypted two-way exchange; wrong-key and plaintext senders rejected; recovery after restore |
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
-| [lora_test](tested_parts/lora_test/) | Hardware PING/PONG confirmed; latest fix awaits hardware retest |
+| [lora_test](tested_parts/lora_test/) | Changed from PING/PONG (hardware-confirmed) to broadcast send and receive; broadcast version not yet hardware-tested |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 
 Detailed logs and measurements are in each project's README and `results/`
-directory.
+or `evidence/` directory.
+
+### Radio conditions
+
+Late and lost figures depend on the channel, ESP-NOW PHY rate and playout
+buffer. Compare results only when these match, or say what differs.
+"1 Mbps" means the rate was not set (the ESP-NOW default).
+
+| Project | Channel | PHY rate | Playout buffer |
+| --- | --- | --- | --- |
+| `e2e_security_test`, `e2e_relay_test`, `e2e_pairing_test` | 1 | 1 Mbps | n/a (messages) |
+| `e2e_voice_test` (stage 5) | 1 | 1 Mbps | 60 ms (sweep 20–80 ms) |
+| `e2e_opus_test` (stage 6) | 11 | 1 Mbps | 60 ms (sweep 20–80 ms) |
+| `e2e_relay_voice_test` | 11 | 6 Mbps passing run, 1 Mbps baseline; set at runtime, lost on reboot | 200 ms |
+| `opus_broadcast_test` | 11 | 1 Mbps | 200 ms (sweep 60–300 ms) |
+| `e2e_broadcast_test` | 11 | 6 Mbps run 1, 1 Mbps run 2; fixed at boot | 200 ms |
+| `mictospeaker_test` | 6 | 6 Mbps | ADPCM stream, not comparable |
+
+Stage 5 (0.5% late at 60 ms) and stage 6 (2.87% late at 60 ms) differ in
+channel as well as codec, so the gap is not caused by Opus alone.
+Broadcast frames get no acknowledgement or retry and needed 1 Mbps;
+relayed unicast needed 6 Mbps for two-way voice.
 
 ## Coding standard
 

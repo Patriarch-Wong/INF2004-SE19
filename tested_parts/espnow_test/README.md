@@ -5,8 +5,10 @@ on Wi-Fi channel 1. Both run the same firmware and accept packets only from
 the other configured station MAC address. No router is needed.
 
 Two-way reception was verified on 2026-09-22: both boards received sequences
-1–7. Rejection of an unknown device has not been tested. Packets are unencrypted;
-the MAC whitelist is a filter, not authentication.
+1–7. Rejection of an unknown device has not been tested with this firmware;
+`e2e_security_test` stage 2 tested the same kind of MAC allowlist with an
+unlisted sender (`board3-unknown`), and its frames were dropped. Packets are
+unencrypted; the MAC whitelist is a filter, not authentication.
 
 ## Hardware and configuration
 

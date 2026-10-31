@@ -1,22 +1,34 @@
 # ESP32 tests
 
-Standalone ESP32 experiments, each in its own project directory.
+Standalone ESP32-S3 N16R8 experiments, each in its own PlatformIO project.
+Results and radio conditions are kept in one place, the
+[root README's test summary](../README.md#test-summary); each project's own
+README has the full procedure and measurements.
 
-| Project | Description | Validation |
-| --- | --- | --- |
-| [mictospeaker_test](mictospeaker_test/) | ESP32-S3 microphone to ESP-NOW ADPCM to PDM speaker, plus capture and SD player diagnostics | Both roles boot and stream; saved logs show packet gaps and underruns; microphone noise unresolved |
-| [codec_test](codec_test/) | ESP32-S3 N16R8 Opus encode/store/decode test | UART and native USB builds passed; three hardware round trips passed over UART |
-| [codec_sdtest](codec_sdtest/) | ESP32-S3 N16R8 Opus + onboard SDMMC test with reusable C++ APIs | UART and native USB builds passed; three codec/SD hardware round trips passed |
-| [lora_test](lora_test/) | ESP32-S3 N16R8 + Core1121 868 MHz two-device PING/PONG test with manual A/B role selection | Hardware round trips confirmed; latest receive-length fix builds successfully, hardware retest pending |
-| [espnow_test](espnow_test/) | ESP32-S3 N16R8 two-board ESP-NOW test with a shared MAC whitelist | Two-way reception of sequences 1–7 confirmed; latest serial diagnostic changes build successfully; unknown-device rejection not tested |
-| [espnow_encrypt_test](espnow_encrypt_test/) | ESP32-S3 N16R8 two-board ESP-NOW test with CCMP encryption, plus wrong-key and plaintext negative-test builds | All four environments build; encrypted exchange and negative tests not yet run on hardware |
-| [espnow_sd_test](espnow_sd_test/) | ESP32-S3 one-way RAM to ESP-NOW to SDMMC transfer | 4096-byte hardware transfer passed with SD read-back, CRC32 verification, and zero receive-queue drops |
+| Project | Description |
+| --- | --- |
+| [button_test](button_test/) | Debounced tactile button and LED |
+| [button_lcd_test](button_lcd_test/) | ST7789 LCD video player from SD, with wireless A/V and streaming variants |
+| [codec_test](codec_test/) | Opus encode/store/decode round trip |
+| [codec_sdtest](codec_sdtest/) | Opus and onboard SDMMC with reusable C++ APIs |
+| [espnow_test](espnow_test/) | Two-board ESP-NOW exchange with a MAC whitelist |
+| [espnow_encrypt_test](espnow_encrypt_test/) | `espnow_test` with CCMP encryption, plus wrong-key and plaintext negative builds |
+| [espnow_sd_test](espnow_sd_test/) | One-way RAM to ESP-NOW to SDMMC transfer |
+| [e2e_security_test](e2e_security_test/) | Stages 1–2: end-to-end AES-GCM messages, replay window, over-the-air attacker |
+| [e2e_relay_test](e2e_relay_test/) | Stage 3: relay forwards end-to-end messages without the pair key |
+| [e2e_pairing_test](e2e_pairing_test/) | Stage 4: pairing, pair keys in NVS, per-boot session keys |
+| [e2e_voice_test](e2e_voice_test/) | Stage 5: synthetic voice over the encrypted link, passive capture |
+| [e2e_opus_test](e2e_opus_test/) | Stage 6: Opus voice over the encrypted link |
+| [e2e_relay_voice_test](e2e_relay_voice_test/) | Two-way encrypted Opus voice between two handsets through a relay |
+| [opus_broadcast_test](opus_broadcast_test/) | One-to-many Opus broadcast, no encryption |
+| [e2e_broadcast_test](e2e_broadcast_test/) | One-to-many Opus broadcast encrypted with a shared group key |
+| [mictospeaker_test](mictospeaker_test/) | I2S microphone to ESP-NOW ADPCM to PDM speaker |
+| [lora_test](lora_test/) | Core1121 868 MHz LoRa broadcast send and receive |
 
-Open the project directory in PlatformIO, or change into it before running commands:
+Open the project directory in PlatformIO, or change into it before running
+commands:
 
 ```sh
 cd codec_test
 pio run
 ```
-
-See each project README for hardware requirements, upload instructions, and measured results.
