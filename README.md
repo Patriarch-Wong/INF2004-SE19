@@ -114,6 +114,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | Hardware-tested: encrypted two-way exchange; wrong-key and plaintext senders rejected; recovery after restore |
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
 | [lora_test](tested_parts/lora_test/) | Changed from PING/PONG (hardware-confirmed) to broadcast send and receive; broadcast version not yet hardware-tested |
+| [lora_encrypt_test](tested_parts/lora_encrypt_test/) | Direct AES-256-GCM serial chat, no relays; builds and host crypto tests pass; user confirmed working on hardware |
 | [mic_speaker_e2e_test](tested_parts/mic_speaker_e2e_test/) | Mic and speaker follow ESP32_Mic_Loopback_v4.ino; one live stream arrived intact (134/134 frames, CRC match) but the speaker was muted, so not yet heard. Earlier PDM build passed E1 (500/500, 26.60 dB) |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
