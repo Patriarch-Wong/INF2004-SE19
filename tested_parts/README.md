@@ -22,6 +22,7 @@ README has the full procedure and measurements.
 | [e2e_relay_voice_test](e2e_relay_voice_test/) | Two-way encrypted Opus voice between two handsets through a relay |
 | [opus_broadcast_test](opus_broadcast_test/) | One-to-many Opus broadcast, no encryption |
 | [e2e_broadcast_test](e2e_broadcast_test/) | One-to-many Opus broadcast encrypted with a shared group key |
+| [mic_speaker_e2e_test](mic_speaker_e2e_test/) | MAX9814 mic on one board to PWM speaker on another (mic/speaker chain from ESP32_Mic_Loopback_v4.ino), encrypted Opus with retransmission |
 | [mictospeaker_test](mictospeaker_test/) | I2S microphone to ESP-NOW ADPCM to PDM speaker |
 | [lora_test](lora_test/) | Core1121 868 MHz LoRa broadcast send and receive |
 
