@@ -8,6 +8,8 @@ README has the full procedure and measurements.
 | Project | Description |
 | --- | --- |
 | [button_test](button_test/) | Debounced tactile button and LED |
+| [dpad_lcd_test](dpad_lcd_test/) | Six debounced buttons (D-pad, confirm, cancel) shown on the ST7789 LCD |
+| [dpad_menu_test](dpad_menu_test/) | Menu navigation on the ST7789 LCD with the six `dpad_lcd_test` buttons |
 | [button_lcd_test](button_lcd_test/) | ST7789 LCD video player from SD, with wireless A/V and streaming variants |
 | [codec_test](codec_test/) | Opus encode/store/decode round trip |
 | [codec_sdtest](codec_sdtest/) | Opus and onboard SDMMC with reusable C++ APIs |
