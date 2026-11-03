@@ -3,7 +3,7 @@
 // D-pad and ST7789 screen, from dpad_menu_test. Screens:
 //
 //   Menu          "Connect <name>" per handset (scrolls past 4 rows),
-//                 Volume, Status; RIGHT on a handset says hello
+//                 Volume, Status
 //   Connecting    waiting for the other handset to accept; CANCEL stops
 //   Request       who wants to connect; OK accepts, CANCEL declines
 //   Connected     hold OK (or PTT) to talk, UP/DOWN volume, RIGHT says
@@ -380,7 +380,7 @@ void draw_menu(uint32_t now)
     draw_title("Menu", title_color);
     draw_menu_rows();
     draw_menu_notice(now);
-    draw_hints(nullptr, "RIGHT: say hello   Green: online");
+    draw_hints(nullptr, "Green dot: online");
 }
 
 // Volume and status pages
@@ -773,10 +773,10 @@ void move_selection(int step)
     draw_menu_row(selected);
 }
 
-// RIGHT on a handset row, or while connected.
-void say_hello(uint8_t peer, uint32_t now)
+// RIGHT while connected: to the connected board only.
+void say_hello(uint32_t now)
 {
-    switch (send_hello(peer, now))
+    switch (send_hello(now))
     {
     case text_result::sent:
         toast("Hello sent", listen_color, now);
@@ -787,6 +787,8 @@ void say_hello(uint8_t peer, uint32_t now)
         break;
     case text_result::too_soon:
         break;  // A second press within a second: the first is on its way.
+    case text_result::not_connected:
+        break;  // Only offered on the Connected screen.
     }
 }
 
@@ -839,14 +841,7 @@ void handle_press(button_id id, uint32_t now)
     switch (shown)
     {
     case screen::menu:
-        if (id == button_id::right)
-        {
-            if (rows[selected].kind == row_kind::connect)
-            {
-                say_hello(rows[selected].peer, now);
-            }
-        }
-        else if (back || forward)
+        if (back || forward)
         {
             move_selection(back ? -1 : 1);
         }
@@ -926,7 +921,7 @@ void handle_press(button_id id, uint32_t now)
         }
         else if (id == button_id::right)
         {
-            say_hello(calls.peer(), now);
+            say_hello(now);
         }
         else if (id == button_id::cancel)
         {

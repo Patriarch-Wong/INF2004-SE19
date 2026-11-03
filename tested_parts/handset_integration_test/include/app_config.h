@@ -166,11 +166,12 @@ constexpr uint32_t ack_lost_ms = 2000;
 // a press meant for the screen before can't accept or decline (B3).
 constexpr uint32_t ui_request_guard_ms = 500;
 
-// Hello text: RIGHT on a `Connect Board N` row, or while connected, sends
-// "Hello from Board N", sealed under the session key like voice. The
-// receiving board shows it in a banner for text_show_ms, with a short beep
-// unless voice is playing or it is talking. Presses closer together than
-// text_min_gap_ms are ignored.
+// Hello text: RIGHT while connected sends "Hello from Board N" to the
+// connected board only, sealed under the session key like voice; a board
+// drops text from any board it isn't connected to. The receiving board
+// shows it in a banner for text_show_ms, with a short beep unless voice is
+// playing or it is talking. Presses closer together than text_min_gap_ms
+// are ignored.
 constexpr uint32_t text_show_ms = 3000;
 constexpr uint32_t text_min_gap_ms = 1000;
 constexpr uint32_t text_tone_hz = 1500;

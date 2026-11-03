@@ -127,6 +127,7 @@ uint8_t text_from = 0;
 uint32_t text_in_count = 0;
 bool text_sent_once = false;
 uint32_t text_sent_ms = 0;
+uint32_t text_not_connected = 0;  // Dropped: not from the connected board.
 
 // Connections.
 call::machine calls;
@@ -862,18 +863,26 @@ enum class text_result : uint8_t
     sent,
     offline,
     too_soon,
+    not_connected,
 };
 
-// Sends "Hello from <this board>" to `peer`, whether or not connected to it.
-text_result send_hello(uint8_t peer, uint32_t now)
+// Sends "Hello from <this board>" to the connected board. Text, like voice,
+// only flows inside a connection.
+text_result send_hello(uint32_t now)
 {
+    if (calls.current() != call::state::connected)
+    {
+        Serial.println("TEXT refused: not connected");
+        return text_result::not_connected;
+    }
+    const uint8_t peer = calls.peer();
     if (text_sent_once &&
         static_cast<int32_t>(now - text_sent_ms) <
             static_cast<int32_t>(app_config::text_min_gap_ms))
     {
         return text_result::too_soon;
     }
-    if (!valid_peer(peer) || !peer_online(peer, now))
+    if (!peer_online(peer, now))
     {
         Serial.printf("TEXT refused: %u is not reachable\n", peer);
         return text_result::offline;
@@ -893,9 +902,16 @@ text_result send_hello(uint8_t peer, uint32_t now)
     return text_result::sent;
 }
 
-// Keeps printable ASCII only (the LCD font), cut to text_max_chars.
+// Text only from the connected board, like voice. Keeps printable ASCII
+// only (the LCD font), cut to text_max_chars.
 void on_text(uint8_t source, const uint8_t *payload, size_t size)
 {
+    if (!calls.connected_with(source))
+    {
+        ++text_not_connected;
+        Serial.printf("TEXT dropped from %u: not connected\n", source);
+        return;
+    }
     size_t n = 0;
     for (size_t i = 0; i < size && n < app_config::text_max_chars; ++i)
     {
@@ -1347,7 +1363,8 @@ void report_handset()
         speaker::muted() ? " (muted)" : "", mic::gain(), mic::gate_ratio());
     Serial.printf("REPORT tx_frames=%lu rx_played=%lu rx_recovered=%lu "
                   "rx_lost=%lu rx_late=%lu busy_drops=%lu yields=%lu "
-                  "foreign=%lu stale=%lu not_connected=%lu\n",
+                  "foreign=%lu stale=%lu not_connected=%lu "
+                  "text_not_connected=%lu\n",
         static_cast<unsigned long>(total_tx_frames),
         static_cast<unsigned long>(total_rx_played),
         static_cast<unsigned long>(total_rx_recovered),
@@ -1357,7 +1374,8 @@ void report_handset()
         static_cast<unsigned long>(tx_yields),
         static_cast<unsigned long>(rx_foreign),
         static_cast<unsigned long>(rx_stale),
-        static_cast<unsigned long>(rx_not_in_call));
+        static_cast<unsigned long>(rx_not_in_call),
+        static_cast<unsigned long>(text_not_connected));
     Serial.printf("REPORT speaker_frames=%lu speaker_rate_hz=%lu "
                   "underruns=%lu notches=%d feedback_gain=%.2f "
                   "radio_queue_drops=%lu\n",
@@ -1494,10 +1512,9 @@ bool run_handset_command(const char *line, uint32_t now)
     {
         place_call(static_cast<uint8_t>(value), now);
     }
-    else if (sscanf(line, "hello %u %c", &value, &extra) == 1)
+    else if (strcmp(line, "hello") == 0)
     {
-        if (send_hello(static_cast<uint8_t>(value), now) ==
-            text_result::too_soon)
+        if (send_hello(now) == text_result::too_soon)
         {
             Serial.println("TEXT wait: one hello per second");
         }
