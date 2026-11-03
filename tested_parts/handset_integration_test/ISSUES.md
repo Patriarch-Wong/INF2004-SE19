@@ -46,7 +46,7 @@ the evidence.
 
 | ID | Problem | Next step | Status |
 | --- | --- | --- | --- |
-| D1 | **Board 3 still runs `e2e_relay_voice_test`**, which has a different network key. Its MAC is in slot 3, so boards 1 and 2 log `REJECT` for its frames and keep sending it hellos (every 15 s since A4). | Flash board 3 with `board3` from this project, or keep it off during tests. | open |
+| D1 | **Board 3 is off and unavailable for now** (2026-11-03), so only boards 1 and 2 can be tested. It last ran `e2e_relay_voice_test`, which has a different network key; its MAC is still in slot 3, so boards 1 and 2 keep sending it hellos (every 15 s since A4). While it is off, every run also covers H15. | When board 3 is back, flash `board3` from this project, then run B2, B4, B5 and D3. Until then, those wait. | waiting for board 3 |
 | D2 | **Boards 4 and 5 not provisioned.** Slots 4 and 5 have zero MACs. | Add their MACs to `network_config.h` when the boards are wired. | open |
 | D3 | **Two calls at once (1–2 and 3–4).** Expected to fit (about 10% of airtime per talker at 1 Mbps), but untested. | Hardware test once four boards are wired. | open |
 
