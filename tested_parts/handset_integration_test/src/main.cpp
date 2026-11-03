@@ -19,6 +19,7 @@
 #include "audio_dsp.h"
 #include "call.h"
 #include "codec.h"
+#include "command_parser.h"
 #include "control_frame.h"
 #include "kdf.h"
 #include "mic.h"

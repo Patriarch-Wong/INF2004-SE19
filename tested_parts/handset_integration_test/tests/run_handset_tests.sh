@@ -7,6 +7,9 @@ output="$(mktemp -d)"
 trap 'rm -rf "$output"' EXIT
 flags="-std=c++11 -Wall -Wextra -Werror -fno-exceptions -fno-rtti -I include"
 # shellcheck disable=SC2086
+c++ $flags tests/command_parser_test.cpp -o "$output/command_parser"
+"$output/command_parser"
+# shellcheck disable=SC2086
 c++ $flags src/call.cpp src/voice_link.cpp tests/call_test.cpp \
     -o "$output/call"
 "$output/call"

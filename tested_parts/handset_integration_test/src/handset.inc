@@ -1508,9 +1508,19 @@ bool run_handset_command(const char *line, uint32_t now)
     {
         stop_talk();
     }
-    else if (sscanf(line, "connect %u %c", &value, &extra) == 1)
+    else if (strncmp(line, "connect", 7) == 0 &&
+             (line[7] == '\0' ||
+              isspace(static_cast<unsigned char>(line[7]))))
     {
-        place_call(static_cast<uint8_t>(value), now);
+        uint8_t peer = 0;
+        if (command_parser::board_id(line + 7, peer))
+        {
+            place_call(peer, now);
+        }
+        else
+        {
+            Serial.println("LINK refused: invalid board ID");
+        }
     }
     else if (strcmp(line, "hello") == 0)
     {
