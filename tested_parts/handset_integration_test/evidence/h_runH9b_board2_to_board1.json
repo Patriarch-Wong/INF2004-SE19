@@ -1,0 +1,27 @@
+{
+  "streams": [
+    {
+      "stream": "FDFEA2AB",
+      "frames_sent": 3000,
+      "sender_crc": "9CB3C410",
+      "nacks_received": 0,
+      "retransmits": 0,
+      "send_errors": 0,
+      "played": 3000,
+      "missing": 0,
+      "direct": 3000,
+      "redundant": 0,
+      "retransmit": 0,
+      "late": 0,
+      "receiver_crc": "9CB3C410",
+      "underruns": 1,
+      "intact": true,
+      "correlation": 0.9989,
+      "snr_db": 26.73,
+      "worst_1s_snr_db": 25.04,
+      "passed": true,
+      "reason": ""
+    }
+  ],
+  "passed": true
+}

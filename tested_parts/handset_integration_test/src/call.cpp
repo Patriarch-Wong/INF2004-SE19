@@ -22,9 +22,13 @@ uint32_t get32(const uint8_t *in)
     return value;
 }
 
+// Signed difference: survives millis() wrapping, and a `since` slightly
+// after `now` (stamped later in the same loop pass) counts as no time
+// passed instead of wrapping to 49 days.
 bool elapsed(uint32_t now, uint32_t since, uint32_t period)
 {
-    return now - since >= period;  // Unsigned: survives millis() wrapping.
+    return static_cast<int32_t>(now - since) >=
+        static_cast<int32_t>(period);
 }
 }
 

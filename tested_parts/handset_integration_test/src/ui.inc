@@ -333,6 +333,16 @@ void draw_menu_rows()
 
 void draw_menu(uint32_t now)
 {
+    // The dots are only kept current while the menu shows; catch up first
+    // so the first frame isn't stale (a board that went offline meanwhile
+    // would show green until the next refresh).
+    for (uint8_t i = 0; i < row_count; ++i)
+    {
+        if (rows[i].kind == row_kind::connect)
+        {
+            ui_reachable[rows[i].peer] = peer_online(rows[i].peer, now);
+        }
+    }
     draw_title("Menu", title_color);
     draw_menu_rows();
     draw_menu_notice(now);
@@ -875,6 +885,175 @@ void poll_buttons(uint32_t now)
     }
 }
 
+// Serial buttons, for testing without hands on the D-pad: `press NAME
+// [MS]`, `hold NAME`, `release [NAME]`. They go through handle_press and
+// handle_release like the real buttons, so the screens, the request guard
+// and hold-OK-to-talk behave the same. Each button's serial state is
+// separate from its pin, so PTT works from serial even though it is not
+// wired.
+struct serial_button
+{
+    bool held;
+    bool timed;           // Released by service_serial_buttons().
+    uint32_t release_at;  // Loop time of the timed release.
+};
+serial_button serial_buttons[button_count] = {};
+constexpr uint32_t serial_tap_ms = 100;
+constexpr uint32_t serial_hold_max_ms = 60000;
+
+int find_button(const char *name)
+{
+    for (size_t i = 0; i < button_count; ++i)
+    {
+        if (strcasecmp(name, buttons[i].name) == 0)
+        {
+            return static_cast<int>(i);
+        }
+    }
+    return -1;
+}
+
+void serial_press(size_t i, uint32_t now)
+{
+    if (serial_buttons[i].held)
+    {
+        return;
+    }
+    serial_buttons[i].held = true;
+    Serial.printf("BUTTON %s (serial)\n", buttons[i].name);
+    handle_press(buttons[i].id, now);
+}
+
+void serial_release(size_t i)
+{
+    if (!serial_buttons[i].held)
+    {
+        return;
+    }
+    serial_buttons[i] = {};
+    Serial.printf("BUTTON %s released (serial)\n", buttons[i].name);
+    handle_release(buttons[i].id);
+}
+
+void service_serial_buttons(uint32_t now)
+{
+    for (size_t i = 0; i < button_count; ++i)
+    {
+        const serial_button &b = serial_buttons[i];
+        if (b.held && b.timed &&
+            static_cast<int32_t>(now - b.release_at) >= 0)
+        {
+            serial_release(i);
+        }
+    }
+}
+
+const char *talk_view_name(talk_view view)
+{
+    switch (view)
+    {
+    case talk_view::idle: return "idle";
+    case talk_view::talking: return "talking";
+    case talk_view::sending: return "sending";
+    case talk_view::listening: return "listening";
+    case talk_view::notice: return "notice";
+    }
+    return "?";
+}
+
+// What the screen shows, for a serial-driven test that can't see the LCD.
+void print_ui(uint32_t now)
+{
+    Serial.printf("UI | screen %s", screen_name(shown));
+    if (shown == screen::menu && row_count > 0)
+    {
+        char label[24];
+        row_label(rows[selected], label, sizeof(label));
+        Serial.printf(" | selected %u/%u \"%s\"", selected + 1, row_count,
+            label);
+        if (rows[selected].kind == row_kind::connect)
+        {
+            Serial.printf(" %s", ui_reachable[rows[selected].peer] ?
+                "(green)" : "(grey)");
+        }
+    }
+    if (shown == screen::connected)
+    {
+        Serial.printf(" | box %s", talk_view_name(current_view(now)));
+    }
+    if (shown == screen::ended)
+    {
+        Serial.printf(" | \"%s\"", end_text(calls.last_end()));
+    }
+    if (notice_showing(now))
+    {
+        Serial.printf(" | notice \"%s %s\"", ui_notice_title,
+            ui_notice_text);
+    }
+    Serial.printf(" | volume %u\n", speaker::volume());
+}
+
+// Returns false if the line is not a button command.
+bool run_button_command(const char *line, uint32_t now)
+{
+    char name[12] = {};
+    unsigned ms = 0;
+    char extra = 0;
+    const int pressed = sscanf(line, "press %11s %u %c", name, &ms, &extra);
+    if (pressed == 1 || pressed == 2)
+    {
+        const int i = find_button(name);
+        if (i < 0 || (pressed == 2 && (ms == 0 || ms > serial_hold_max_ms)))
+        {
+            Serial.println("BUTTON usage: press up|down|left|right|ok|"
+                           "cancel|ptt [1..60000 ms]");
+            return true;
+        }
+        serial_press(static_cast<size_t>(i), now);
+        serial_buttons[i].timed = true;
+        serial_buttons[i].release_at = now + (pressed == 2 ? ms :
+            serial_tap_ms);
+        return true;
+    }
+    if (sscanf(line, "hold %11s %c", name, &extra) == 1)
+    {
+        const int i = find_button(name);
+        if (i < 0)
+        {
+            Serial.println("BUTTON usage: hold NAME, then release NAME");
+            return true;
+        }
+        serial_press(static_cast<size_t>(i), now);
+        serial_buttons[i].timed = false;
+        return true;
+    }
+    if (strcmp(line, "release") == 0)
+    {
+        for (size_t i = 0; i < button_count; ++i)
+        {
+            serial_release(i);
+        }
+        return true;
+    }
+    if (sscanf(line, "release %11s %c", name, &extra) == 1)
+    {
+        const int i = find_button(name);
+        if (i < 0)
+        {
+            Serial.println("BUTTON usage: release [NAME]");
+            return true;
+        }
+        serial_release(static_cast<size_t>(i));
+        return true;
+    }
+    if (strcmp(line, "ui") == 0)
+    {
+        print_ui(now);
+        return true;
+    }
+    return false;
+}
+
 // Redraws the live parts of the current screen that changed.
 void refresh(uint32_t now)
 {
@@ -1025,6 +1204,7 @@ void show_stopped(const char *reason)
 void service_ui(uint32_t now)
 {
     poll_buttons(now);
+    service_serial_buttons(now);
     if (calls.end_count() != ui_shown_ends)
     {
         ui_shown_ends = calls.end_count();

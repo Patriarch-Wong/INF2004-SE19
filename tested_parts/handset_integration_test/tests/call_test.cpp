@@ -508,6 +508,30 @@ void test_clock_wrap()
     check(a.connected_with(2) && b.connected_with(1),
         "connection survives millis() wrapping");
 }
+
+// Found on hardware: a serial command stamped its action with millis(),
+// a few ms after the loop's `now`, and the next tick(now) saw 49 days
+// pass, so `connect` ended at once as no answer and `accept` as link lost.
+void test_action_after_tick_time()
+{
+    network net;
+    machine &a = net.boards[1];
+    machine &b = net.boards[2];
+    net.now = 5000;
+    a.dial(2, 0x900, net.now + 5);
+    a.tick(net.now);
+    check(a.current() == state::calling,
+        "asking stamped after the tick time does not time out");
+    net.deliver();
+    b.answer(net.now + 5);
+    b.tick(net.now);
+    check(b.current() == state::connected,
+        "accepting stamped after the tick time does not lose the link");
+    net.deliver();
+    net.run(3000);
+    check(a.connected_with(2) && b.connected_with(1),
+        "and the connection stays up");
+}
 }
 
 int main()
@@ -522,5 +546,6 @@ int main()
     test_glare_and_busy();
     test_stale_and_foreign();
     test_clock_wrap();
+    test_action_after_tick_time();
     return test_check::finish("connection");
 }

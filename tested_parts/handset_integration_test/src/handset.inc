@@ -181,7 +181,8 @@ bool acks_lost(uint8_t peer, uint32_t now)
 bool peer_online(uint8_t peer, uint32_t now)
 {
     return can_send(peer) &&
-        now - peers[peer].last_accept_ms < app_config::presence_timeout_ms &&
+        static_cast<int32_t>(now - peers[peer].last_accept_ms) <
+            static_cast<int32_t>(app_config::presence_timeout_ms) &&
         !acks_lost(peer, now);
 }
 
@@ -368,7 +369,7 @@ void codec_task(void *)
 
 // Sender, loop side
 
-void send_end()
+void send_end(uint32_t now)
 {
     const voice_link::stream_end end = {tx_flags, tx_stream, tx_next,
         voice_link::crc32_end(tx_crc)};
@@ -378,7 +379,7 @@ void send_end()
     {
         send_payload(tx_peer, payload, size);
     }
-    tx_last_end_ms = millis();
+    tx_last_end_ms = now;
 }
 
 void send_encoded(const encoded &frame)
@@ -579,7 +580,7 @@ void service_sender(uint32_t now)
         }
         tx = tx_phase::draining;
         tx_drain_until_ms = now + app_config::sender_linger_ms;
-        send_end();
+        send_end(now);
     }
     if (tx == tx_phase::idle)
     {
@@ -592,7 +593,7 @@ void service_sender(uint32_t now)
     }
     if (now - tx_last_end_ms >= app_config::end_repeat_ms)
     {
-        send_end();
+        send_end(now);
     }
     if (static_cast<int32_t>(now - tx_drain_until_ms) >= 0)
     {
@@ -739,7 +740,7 @@ void on_nack(uint8_t source, const uint8_t *payload, size_t size)
     }
 }
 
-void finish_receive()
+void finish_receive(uint32_t now)
 {
     voice_link::receiver::counters counts = {};
     uint32_t stream = 0;
@@ -757,7 +758,7 @@ void finish_receive()
     rx_done.store(false);
     speaker::set_streaming(false);
     rx_finished_stream = stream;
-    rx_last_end_ms = millis();
+    rx_last_end_ms = now;
     const playback_result &result = rx_result;
     const bool intact = rx_end_seen && counts.missing == 0 &&
         counts.played == frames && result.crc == sender_crc;
@@ -816,7 +817,7 @@ void service_receiver(uint32_t now)
     }
     if (rx_done.load())
     {
-        finish_receive();
+        finish_receive(now);
         return;
     }
     voice_link::nack request = {};
@@ -1382,8 +1383,10 @@ uint32_t seconds_to_frames(unsigned seconds)
         app_config::max_stream_frames : frames;
 }
 
-// Returns false if the line is not a handset command.
-bool run_handset_command(const char *line)
+// Returns false if the line is not a handset command. `now` is the loop's
+// time: state stamped with a later millis() would look like it is in the
+// future to the rest of this loop pass.
+bool run_handset_command(const char *line, uint32_t now)
 {
     unsigned value = 0;
     unsigned second_value = 0;
@@ -1412,25 +1415,25 @@ bool run_handset_command(const char *line)
     }
     else if (sscanf(line, "connect %u %c", &value, &extra) == 1)
     {
-        place_call(static_cast<uint8_t>(value), millis());
+        place_call(static_cast<uint8_t>(value), now);
     }
     else if (strcmp(line, "accept") == 0)
     {
-        if (!calls.answer(millis()))
+        if (!calls.answer(now))
         {
             Serial.println("LINK no request to accept");
         }
     }
     else if (strcmp(line, "decline") == 0)
     {
-        if (!calls.decline(millis()))
+        if (!calls.decline(now))
         {
             Serial.println("LINK no request to decline");
         }
     }
     else if (strcmp(line, "disconnect") == 0)
     {
-        if (!calls.hang_up(millis()))
+        if (!calls.hang_up(now))
         {
             Serial.println("LINK not connected");
         }

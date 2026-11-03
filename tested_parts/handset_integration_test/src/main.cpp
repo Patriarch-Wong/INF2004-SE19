@@ -14,6 +14,7 @@
 #include <ctype.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include "app_config.h"
 #include "audio_dsp.h"
 #include "call.h"
@@ -203,7 +204,7 @@ void print_session(const char *how, uint8_t peer)
 
 void handle_session(const radio::received_frame &frame,
     const secure_message::header &fields,
-    const control_frame::message &content)
+    const control_frame::message &content, uint32_t now)
 {
     session::link &link = peers[fields.source].link;
     if (fields.destination != own_id)
@@ -224,7 +225,7 @@ void handle_session(const radio::received_frame &frame,
         // slow retry.
         peer_state &state = peers[fields.source];
         state.hellos = 0;
-        state.last_hello_ms = millis() - app_config::session_retry_ms;
+        state.last_hello_ms = now - app_config::session_retry_ms;
     }
     uint8_t nonce[session::nonce_size];
     esp_fill_random(nonce, sizeof(nonce));
@@ -241,11 +242,11 @@ void handle_session(const radio::received_frame &frame,
         send_control(control_frame::type_session, fields.source, mac,
             response);
         print_session("initiator", fields.source);
-        peers[fields.source].last_accept_ms = millis();  // Online now.
+        peers[fields.source].last_accept_ms = now;  // Online now.
         break;
     case session::event::confirmed:
         print_session("responder", fields.source);
-        peers[fields.source].last_accept_ms = millis();
+        peers[fields.source].last_accept_ms = now;
         break;
     case session::event::bad_tag:
         reject(frame, "bad handshake tag");
@@ -297,7 +298,7 @@ void handle(const radio::received_frame &frame, uint32_t now)
         }
         else
         {
-            handle_session(frame, fields, content);
+            handle_session(frame, fields, content, now);
         }
         return;
     }
@@ -348,6 +349,8 @@ void print_help()
     Serial.println("Audio: + | - | vol N | ] | [ | gate R | m | r | gain X | "
                    "mic | micdump S | tone HZ [MS] | sweep");
     Serial.println("Link: report | radio CH MBPS | keys | reboot");
+    Serial.println("D-pad: press NAME [MS] | hold NAME | release [NAME] | "
+                   "ui (NAME: up down left right ok cancel ptt)");
 }
 
 void run_command(const char *line, uint32_t now)
@@ -357,7 +360,10 @@ void run_command(const char *line, uint32_t now)
     {
         Serial.println("Stopped: only reboot works");
     }
-    else if (run_handset_command(line))
+    else if (run_handset_command(line, now))
+    {
+    }
+    else if (run_button_command(line, now))
     {
     }
     else if (strcmp(line, "keys") == 0)

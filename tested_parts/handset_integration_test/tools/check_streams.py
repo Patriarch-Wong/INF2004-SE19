@@ -2,7 +2,9 @@
 
 A stream passes when the receiver played every frame the sender sent, the
 CRC-32 over the played Opus packets equals the sender's, and the end
-message arrived (intact=yes). Prints JSON; exits 1 if any stream fails.
+message arrived (intact=yes). A stream the sender gave up in a
+push-to-talk collision (TX_YIELD) is never played, by design; it is listed
+as yielded and does not fail the run. Prints JSON; exits 1 if any stream fails.
 
     python3 tools/check_streams.py evidence/run1_mic.txt evidence/run1_spk.txt
 """
@@ -27,7 +29,12 @@ def records(path: Path, tag: str) -> dict:
     return found
 
 
-def check(sender: dict, receiver: dict) -> dict:
+def yielded(path: Path) -> set:
+    """Stream IDs the sender gave up in a collision (`TX_YIELD stream=X:`)."""
+    return {stream.rstrip(":") for stream in records(path, "TX_YIELD")}
+
+
+def check(sender: dict, receiver: dict, gave_up: set = frozenset()) -> dict:
     streams = []
     for stream, tx in sender.items():
         rx = receiver.get(stream)
@@ -36,7 +43,10 @@ def check(sender: dict, receiver: dict) -> dict:
                  "nacks_received": int(tx["nacks"]),
                  "retransmits": int(tx["retransmits"]),
                  "send_errors": int(tx["send_errors"])}
-        if rx is None:
+        if stream in gave_up:
+            entry.update(passed=True, yielded=True,
+                         reason="sender yielded the floor; not played")
+        elif rx is None:
             entry.update(passed=False, reason="no RX_END in receiver log")
         else:
             entry.update(
@@ -65,8 +75,9 @@ def main() -> int:
     if len(sys.argv) != 3:
         print(__doc__)
         return 2
-    result = check(records(Path(sys.argv[1]), "TX_END"),
-                   records(Path(sys.argv[2]), "RX_END"))
+    sender = Path(sys.argv[1])
+    result = check(records(sender, "TX_END"),
+                   records(Path(sys.argv[2]), "RX_END"), yielded(sender))
     print(json.dumps(result, indent=2))
     return 0 if result["passed"] else 1
 

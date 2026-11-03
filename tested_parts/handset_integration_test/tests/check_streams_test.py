@@ -47,6 +47,17 @@ def main() -> int:
     expect(not gap["passed"], "missing frame fails")
     expect(not run(TX, "")["passed"], "no receiver line fails")
     expect(not run("", "")["passed"], "no streams fails")
+    with tempfile.TemporaryDirectory() as folder:
+        log = Path(folder, "tx.txt")
+        log.write_text("59.13 TX_YIELD stream=0A0B0C0D: 1 (Board 1) pressed "
+                       "talk at the same time and keeps the floor "
+                       "(stream B784ED75)\n" + TX)
+        gave_up = check_streams.yielded(log)
+        expect(gave_up == {"0A0B0C0D"}, "TX_YIELD stream parsed")
+        result = check_streams.check(check_streams.records(log, "TX_END"),
+                                     {}, gave_up)
+        expect(result["passed"] and result["streams"][0]["yielded"],
+               "a yielded stream with no RX_END does not fail")
     if failures:
         print(f"{failures} check_streams test(s) failed")
         return 1

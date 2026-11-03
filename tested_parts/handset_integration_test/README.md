@@ -234,7 +234,8 @@ sh tests/run_handset_tests.sh    # connections, voice link, audio DSP, check_str
 ```
 
 Validated 2026-11-03: all five environments build with no warnings, and
-all host suites pass. The screens have no host tests; H1–H9 below cover them.
+all host suites pass. The screens have no host tests; the H tests below
+cover them.
 
 ## Keys: pre-pairing for five boards
 
@@ -342,6 +343,15 @@ python3 tools/check_streams.py evidence/h8_b1.txt evidence/h8_b2.txt
 | `+` / `-` / `vol N`, `]` / `[` / `gate R`, `m`, `r`, `gain X` | Audio, as in `mic_speaker_e2e_test` |
 | `mic`, `micdump S`, `tone HZ [MS]`, `sweep` | Mic and speaker checks |
 | `report`, `radio CH MBPS`, `keys`, `reboot` | Counters, radio, keys, restart |
+| `press NAME [MS]` | Tap a D-pad button from serial, held MS ms (default 100). NAME: `up` `down` `left` `right` `ok` `cancel` `ptt` |
+| `hold NAME` / `release [NAME]` | Hold a button until released; `release` alone releases all |
+| `ui` | What the screen shows: screen, selected menu row and its dot, talk box, notice, volume |
+
+The button commands go through the same code as the real buttons (log
+`BUTTON OK (serial)`), so the screens, the 0.5 s request guard and
+hold-OK-to-talk all behave the same. `PTT` works from serial although no
+pin is wired. Use them to run the H tests from a script, for example
+`hold ok` on both boards at once for H11.
 
 The audio chain, gate strictness and "no sound" checks are as in
 [mic_speaker_e2e_test](../mic_speaker_e2e_test/README.md).
@@ -351,9 +361,12 @@ The audio chain, gate strictness and "no sound" checks are as in
 Open issues and planned fixes, mostly for more than two boards, are
 tracked in [ISSUES.md](ISSUES.md).
 
-- **Not run on hardware yet.** The D-pad tests are also still waiting on
-  hardware validation, including whether GPIO20 and GPIO0 work as buttons
-  on these boards.
+- **Hardware so far: boards 1 and 2, driven over serial.** On 2026-11-03,
+  H1–H3, H5–H8 and H11–H16 passed with the serial button commands, and
+  H9 had 19 of 20 streams intact (one late burst, `ISSUES.md` C9)
+  ([evidence](evidence/hardware_2026-11-03.md)). Checked by hand: talking
+  and listening (H4), and the physical OK (GPIO20) and CANCEL (GPIO0)
+  buttons. Still to do: H10.
 - **Half duplex.** One side talks at a time. Full duplex would need echo
   cancellation.
 - **Link loss takes about 2 s to notice** (radio acknowledgements), up to
