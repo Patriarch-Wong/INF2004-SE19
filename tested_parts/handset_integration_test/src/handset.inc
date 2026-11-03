@@ -30,7 +30,7 @@ enum class tx_phase : uint8_t
 {
     idle,
     talking,
-    stopping,  // Waiting for the codec's last frame.
+    stopping,  // Waiting for the codec's last frame (none sent if yielded).
     draining,  // Repeating the end message and answering NACKs.
 };
 
@@ -45,6 +45,8 @@ uint32_t mic_seconds_shown = 0;
 QueueHandle_t encoded_queue = nullptr;
 tx_phase tx = tx_phase::idle;
 bool tx_from_button = false;
+bool tx_yielded = false;  // Lost a push-to-talk collision; now listening.
+uint32_t tx_yields = 0;
 uint32_t tx_stream = 0;
 uint8_t tx_flags = 0;
 uint8_t tx_peer = 0;
@@ -147,6 +149,22 @@ public:
 bool can_send(uint8_t peer)
 {
     return peers[peer].link.established();
+}
+
+// Presence ping (after voice_link's kinds 1..3 and call's 4): one byte,
+// sealed under the session key like everything else, so only the real
+// handset can make one.
+constexpr uint8_t kind_presence = 5;
+static_assert(kind_presence > voice_link::kind_end &&
+        kind_presence != call::kind_call,
+    "presence kind clashes with another payload kind");
+
+// A session is up and something from the handset opened recently. A
+// session alone says only that the handset was there once.
+bool peer_online(uint8_t peer, uint32_t now)
+{
+    return can_send(peer) &&
+        now - peers[peer].last_accept_ms < app_config::presence_timeout_ms;
 }
 
 esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size)
@@ -484,6 +502,7 @@ bool start_talk(bool test, uint32_t frames, bool from_button)
     mic::set_capture(true);
     codec_tx_on.store(true);
     tx = tx_phase::talking;
+    tx_yielded = false;
     tx_from_button = from_button;
     tx_started_ms = millis();
     Serial.printf("TX_START stream=%08lX peer=%u source=%s max_frames=%lu "
@@ -504,13 +523,29 @@ void stop_talk()
     tx = tx_phase::stopping;
 }
 
+// Both handsets pressed push-to-talk at once and the peer keeps the floor
+// (voice_link::yields_floor): stop at once and play the peer instead. The
+// peer dropped this stream, so the codec's last frames are thrown away and
+// no end message follows. Called with rx_lock held; does not print.
+void yield_floor()
+{
+    codec_tx_on.store(false);
+    mic::set_capture(false);
+    tx = tx_phase::stopping;
+    tx_yielded = true;
+    ++tx_yields;
+}
+
 void service_sender(uint32_t now)
 {
     encoded frame;
     while (tx != tx_phase::idle && tx != tx_phase::draining &&
         xQueueReceive(encoded_queue, &frame, 0) == pdTRUE)
     {
-        send_encoded(frame);
+        if (!tx_yielded)
+        {
+            send_encoded(frame);
+        }
     }
     if (tx == tx_phase::talking && tx_next >= tx_limit)
     {
@@ -519,6 +554,11 @@ void service_sender(uint32_t now)
     if (tx == tx_phase::stopping && !codec_tx_busy.load() &&
         uxQueueMessagesWaiting(encoded_queue) == 0)
     {
+        if (tx_yielded)
+        {
+            finish_send();
+            return;
+        }
         tx = tx_phase::draining;
         tx_drain_until_ms = now + app_config::sender_linger_ms;
         send_end();
@@ -544,6 +584,8 @@ void service_sender(uint32_t now)
 
 // Receiver, loop side
 
+const char *device_name(uint8_t id);
+
 void on_voice(uint8_t source, const uint8_t *payload, size_t size,
     int64_t now_us, uint32_t now)
 {
@@ -555,6 +597,7 @@ void on_voice(uint8_t source, const uint8_t *payload, size_t size,
     }
     bool started = false;
     bool unmuted = false;
+    bool yielded = false;
     {
         rx_guard hold;
         if (!incoming.active())
@@ -569,10 +612,19 @@ void on_voice(uint8_t source, const uint8_t *payload, size_t size,
                 ++rx_not_in_call;  // Voice only inside a connection.
                 return;
             }
-            if (tx == tx_phase::talking || tx == tx_phase::stopping)
+            if ((tx == tx_phase::talking || tx == tx_phase::stopping) &&
+                !tx_yielded)
             {
-                ++rx_busy_drops;  // Half duplex: this board is talking.
-                return;
+                // Half duplex: both sides are talking. One of them gives
+                // way, or a third handset's voice is dropped.
+                if (source != tx_peer || !voice_link::yields_floor(tx_stream,
+                        own_id, frame.stream_id, source))
+                {
+                    ++rx_busy_drops;
+                    return;
+                }
+                yield_floor();
+                yielded = true;
             }
             incoming.start(frame.stream_id, frame.sequence);
             rx_peer = source;
@@ -611,6 +663,14 @@ void on_voice(uint8_t source, const uint8_t *payload, size_t size,
         }
     }
     rx_last_ms = now;
+    if (yielded)
+    {
+        Serial.printf("TX_YIELD stream=%08lX: %u (%s) pressed talk at the "
+                      "same time and keeps the floor (stream %08lX)\n",
+            static_cast<unsigned long>(tx_stream), source,
+            device_name(source),
+            static_cast<unsigned long>(frame.stream_id));
+    }
     if (started)
     {
         Serial.printf("RX_START stream=%08lX from=%u first=%lu buffer_ms=%lu "
@@ -819,6 +879,8 @@ void handle_data(const radio::received_frame &frame,
     case voice_link::kind_end:
         on_end(fields.source, payload, size);
         break;
+    case kind_presence:
+        break;  // Opening it was the point: last_accept_ms is updated.
     default:
         reject(frame, "unknown voice payload");
         break;
@@ -843,10 +905,10 @@ bool place_call(uint8_t peer, uint32_t now)
         Serial.printf("LINK refused: no handset %u\n", peer);
         return false;
     }
-    if (!can_send(peer))
+    if (!peer_online(peer, now))
     {
-        Serial.printf("LINK refused: no session with %u (not reachable)\n",
-            peer);
+        Serial.printf("LINK refused: %u is offline (%s)\n", peer,
+            can_send(peer) ? "no presence ping for a while" : "no session");
         return false;
     }
     uint32_t id = 0;
@@ -919,6 +981,33 @@ void report_call(uint32_t now)
         break;
     case call::state::idle:
         break;
+    }
+}
+
+// Pings every handset with a session and logs when one comes or goes.
+void service_presence(uint32_t now)
+{
+    for (uint8_t peer = 1; peer <= max_id; ++peer)
+    {
+        if (!valid_peer(peer))
+        {
+            continue;
+        }
+        peer_state &state = peers[peer];
+        if (can_send(peer) &&
+            now - state.last_presence_ms >= app_config::presence_ping_ms)
+        {
+            state.last_presence_ms = now;
+            const uint8_t payload[] = {kind_presence};
+            send_payload(peer, payload, sizeof(payload));  // Best effort.
+        }
+        const bool online = peer_online(peer, now);
+        if (online != state.shown_online)
+        {
+            state.shown_online = online;
+            Serial.printf("PEER %u (%s) %s\n", peer, device_name(peer),
+                online ? "online" : "offline");
+        }
     }
 }
 
@@ -1089,14 +1178,15 @@ void report_handset()
         redundancy ? "on" : "off", speaker::volume(),
         speaker::muted() ? " (muted)" : "", mic::gain(), mic::gate_ratio());
     Serial.printf("REPORT tx_frames=%lu rx_played=%lu rx_recovered=%lu "
-                  "rx_lost=%lu rx_late=%lu busy_drops=%lu foreign=%lu "
-                  "stale=%lu not_connected=%lu\n",
+                  "rx_lost=%lu rx_late=%lu busy_drops=%lu yields=%lu "
+                  "foreign=%lu stale=%lu not_connected=%lu\n",
         static_cast<unsigned long>(total_tx_frames),
         static_cast<unsigned long>(total_rx_played),
         static_cast<unsigned long>(total_rx_recovered),
         static_cast<unsigned long>(total_rx_lost),
         static_cast<unsigned long>(total_rx_late),
         static_cast<unsigned long>(rx_busy_drops),
+        static_cast<unsigned long>(tx_yields),
         static_cast<unsigned long>(rx_foreign),
         static_cast<unsigned long>(rx_stale),
         static_cast<unsigned long>(rx_not_in_call));
@@ -1174,6 +1264,7 @@ void service_handset(uint32_t now)
             static_cast<unsigned long>(app_config::opus_bitrate_bps),
             static_cast<unsigned long>(codec_lookahead));
     }
+    service_presence(now);
     service_calls(now);
     service_sender(now);
     service_receiver(now);

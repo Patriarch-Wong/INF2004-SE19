@@ -103,6 +103,16 @@ uint8_t kind(const uint8_t *payload, size_t size)
     return payload && size > 0 ? payload[0] : 0;
 }
 
+bool yields_floor(uint32_t own_stream, uint8_t own_id, uint32_t peer_stream,
+    uint8_t peer_id)
+{
+    if (own_stream != peer_stream)
+    {
+        return own_stream < peer_stream;
+    }
+    return own_id > peer_id;
+}
+
 bool parse_voice(const uint8_t *payload, size_t size, voice_frame *frame)
 {
     if (!frame || kind(payload, size) != kind_voice ||

@@ -139,6 +139,13 @@ constexpr uint32_t max_dump_seconds = 10;
 constexpr uint32_t session_retry_ms = 1000;
 constexpr uint32_t session_resync_ms = 5000;
 
+// Presence. A session is made once and never times out, so every board
+// also pings each handset it has a session with. A handset is online while
+// something from it opened within presence_timeout_ms (three missed pings);
+// the menu's dot and `Connect` follow that.
+constexpr uint32_t presence_ping_ms = 2000;
+constexpr uint32_t presence_timeout_ms = 6500;
+
 // Tasks. One codec task makes every Opus call (the library shares scratch
 // memory); it runs on core 0 below Wi-Fi. Mic and speaker tasks move
 // samples and must not wait on anything else.

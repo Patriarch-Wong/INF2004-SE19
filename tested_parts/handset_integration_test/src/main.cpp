@@ -57,6 +57,8 @@ struct peer_state
     uint32_t last_hello_ms = 0;
     uint32_t last_accept_ms = 0;
     uint32_t last_resync_ms = 0;
+    uint32_t last_presence_ms = 0;  // Last presence ping sent.
+    bool shown_online = false;      // Last state logged as PEER.
 };
 
 peer_state peers[max_id + 1];  // Indexed by device ID.
@@ -212,9 +214,11 @@ void handle_session(const radio::received_frame &frame,
         send_control(control_frame::type_session, fields.source, mac,
             response);
         print_session("initiator", fields.source);
+        peers[fields.source].last_accept_ms = millis();  // Online now.
         break;
     case session::event::confirmed:
         print_session("responder", fields.source);
+        peers[fields.source].last_accept_ms = millis();
         break;
     case session::event::bad_tag:
         reject(frame, "bad handshake tag");
@@ -385,8 +389,9 @@ void print_status()
         const session::link &link = peers[peer].link;
         if (link.established())
         {
-            Serial.printf(" %u=%08lX", peer,
-                static_cast<unsigned long>(link.session_id()));
+            Serial.printf(" %u=%08lX%s", peer,
+                static_cast<unsigned long>(link.session_id()),
+                peer_online(peer, millis()) ? "" : "(offline)");
         }
         else
         {

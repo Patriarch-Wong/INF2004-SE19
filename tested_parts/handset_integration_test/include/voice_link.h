@@ -104,6 +104,15 @@ bool build_end(const stream_end &end, uint8_t *payload, size_t capacity,
 // 0 if the payload is too short to have a kind.
 uint8_t kind(const uint8_t *payload, size_t size);
 
+// Half-duplex collision: both handsets pressed push-to-talk before either
+// heard the other, so each is sending and dropping the other's voice.
+// Each side calls this when the peer's voice arrives while it is sending;
+// both see the same two stream IDs, so exactly one side gives up the floor
+// and listens. The higher stream ID keeps talking (stream IDs are random,
+// so neither handset always wins); on a tie, the lower handset ID does.
+bool yields_floor(uint32_t own_stream, uint8_t own_id, uint32_t peer_stream,
+    uint8_t peer_id);
+
 // Each parse_* fails unless the kind, sizes and stream ID are valid.
 bool parse_voice(const uint8_t *payload, size_t size, voice_frame *frame);
 bool parse_nack(const uint8_t *payload, size_t size, nack *request);

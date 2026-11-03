@@ -340,6 +340,23 @@ void test_receiver_bounds()
             r.stats().late == 0,
         "redundant copy not counted late");
 }
+void test_floor_collision()
+{
+    using voice_link::yields_floor;
+    // Exactly one side yields, whichever pair of streams collides.
+    const uint32_t streams[][2] = {{0x10, 0x20}, {0xFFFFFFFFu, 1},
+        {0x80000000u, 0x7FFFFFFFu}, {0x1234, 0x1234}};
+    for (const auto &pair : streams)
+    {
+        const bool a = yields_floor(pair[0], 1, pair[1], 2);
+        const bool b = yields_floor(pair[1], 2, pair[0], 1);
+        check(a != b, "exactly one handset yields the floor");
+    }
+    check(yields_floor(0x10, 1, 0x20, 2), "lower stream yields");
+    check(!yields_floor(0x20, 2, 0x10, 1), "higher stream keeps talking");
+    check(yields_floor(0x55, 3, 0x55, 1) && !yields_floor(0x55, 1, 0x55, 3),
+        "equal streams: lower handset keeps talking");
+}
 }
 
 int main()
@@ -352,5 +369,6 @@ int main()
     test_receiver_redundancy();
     test_receiver_nack_limits();
     test_receiver_bounds();
+    test_floor_collision();
     return test_check::finish("voice link");
 }

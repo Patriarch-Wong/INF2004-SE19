@@ -88,13 +88,13 @@ others and set `ptt_pin` to a free GPIO (for example 13 or 2) in
 
 | Screen | Shows | Buttons |
 | --- | --- | --- |
-| Menu | `Connect Board N` for each other provisioned board (green dot = session up), `Volume`, `Status`; scrolls when there are more than 4 rows | UP/LEFT, DOWN/RIGHT choose; OK selects |
+| Menu | `Connect Board N` for each other provisioned board (green dot = online now, see Presence), `Volume`, `Status`; scrolls when there are more than 4 rows | UP/LEFT, DOWN/RIGHT choose; OK selects |
 | Connecting | Asking Board 2, time waiting | CANCEL stops asking |
 | Request | **Who wants to connect**, "verified by pair key"; the speaker beeps every 1.5 s | OK accepts, CANCEL declines |
 | Connected | Peer name, connection time, talk box, volume, last heard | Hold OK (or PTT) to talk; UP/RIGHT, DOWN/LEFT volume; **CANCEL disconnects** |
 | Disconnected | Peer and reason | Any button, or 3 s, back to the menu |
 | Volume | 1–32 with a bar | UP/RIGHT louder, DOWN/LEFT quieter, CANCEL back |
-| Status | ID, MAC, channel, session per handset, frame counters, uptime | CANCEL back |
+| Status | ID, MAC, channel, online/offline and session per handset, frame counters, uptime | CANCEL back |
 
 The talk box on the Connected screen shows:
 
@@ -105,6 +105,17 @@ The talk box on the Connected screen shows:
 
 You can't talk while the other side is talking (half duplex). The green box
 already shows who is talking.
+
+If both sides press OK at the same moment, neither has heard the other
+yet, so both start sending. Each side drops the other's voice while it
+sends. Without a tie-break, both would stay on `TALKING` with nobody
+hearing anything. Instead, when either side hears the other's voice while
+it is sending, both apply the same rule (`voice_link::yields_floor`): the
+stream with the higher random ID keeps talking, and the other side stops
+at once. The side that stops switches to `Board N is talking` and plays
+the other side from its first word, because the missing first frames are
+asked for again. Its log shows `TX_YIELD`. To talk, wait for the roger
+beep and press OK again.
 
 Reasons on the Disconnected screen:
 
@@ -151,6 +162,25 @@ Connection messages are a fourth payload kind inside the voice channel
   or `Connection lost` if the reboot takes longer than 6 s.
 - **Both connect at once:** the lower ID keeps asking, and the higher ID
   shows the request.
+
+### Presence
+
+A session is made once at boot and never expires, so it can't tell you
+whether the other board is still on. Every board therefore sends a
+one-byte presence ping, sealed under the session key, to each handset it
+has a session with every 2 s (`presence_ping_ms`). A handset counts as
+online while anything from it has opened in the last 6.5 s
+(`presence_timeout_ms`, three missed pings). Pings, heartbeats and voice
+all count, and so does a fresh handshake.
+
+- The menu dot, the Status page and `Connect` follow this. Connecting to
+  an offline board is refused at once with `not reachable` instead of
+  waiting 30 s for `No answer`.
+- The log shows `PEER N (Board N) online` / `offline` on each change, and
+  the 10 s status line marks stale sessions `(offline)`.
+- A board that comes back goes green within about 2 s: after a reboot
+  through the new handshake, and after being out of range through the next
+  ping.
 
 `src/call.cpp` has no radio or timing code. `tests/call_test.cpp` runs it
 over a simulated link with:
@@ -255,7 +285,7 @@ Serial runs at 921,600 baud.
 
 | # | Test | Pass |
 | --- | --- | --- |
-| H1 | Boot both boards | Menu with this board's name at top right; the dot next to `Connect Board N` turns green once `SESSION established`; the boot log lists every `BUTTON` with nothing `held at startup` |
+| H1 | Boot both boards | Menu with this board's name at top right; the dot next to `Connect Board N` turns green once `SESSION established` (log `PEER N ... online`); the boot log lists every `BUTTON` with nothing `held at startup` |
 | H2 | Every button on Menu, Volume and Status | Each press logs `BUTTON X` once and the screen follows; `UI screen=... draw_ms` under 400 ms |
 | H3 | Connect: board 1 → `Connect Board 2`, OK on board 2 | Board 2 shows `Board 1 wants to connect` and beeps; both show Connected; both logs show `LINK connected` with the same id and session |
 | H4 | Talk both ways: hold OK on board 1 and speak, release; then board 2 | Sender TALKING, receiver `Board N is talking`, speech heard, roger beep, `RX_END ... intact=yes` |
@@ -265,6 +295,8 @@ Serial runs at 921,600 baud.
 | H8 | Known signal: connected, `test 30` on board 1, then on board 2 | `tools/check_streams.py` passes, as E1 in `mic_speaker_e2e_test` |
 | H9 | Alternating PTT for two minutes (design review) | No reset, no disconnect; every `RX_END` `intact=yes`; no sustained underruns in `report` |
 | H10 | New board: flash `board4` on a board whose MAC is not in slot 4 | Stops with `This MAC is not in network_config.h` and its MAC on screen; after adding the MAC and reflashing, it boots, and the others (rebuilt) list `Connect Board 4` |
+| H11 | Both press OK together, several times | Within a fraction of a second one board shows `Board N is talking` and logs `TX_YIELD`, while the other stays on `TALKING` and is heard from its first word. Either board can win. `report` counts `yields` |
+| H12 | Presence: on the menu, unplug board 2; plug it back in | Board 1's dot for Board 2 goes grey and logs `PEER 2 (Board 2) offline` within about 7 s; `Connect Board 2` then shows `not reachable` at once. After board 2 boots, the dot is green again within a few seconds and connecting works |
 
 H8 from serial with `tools/capture_logs.py`:
 
@@ -303,8 +335,8 @@ The audio chain, gate strictness and "no sound" checks are as in
 - **Link loss takes up to 6 s to notice.** Until then the sender can talk
   into the air. Reading ESP-NOW's per-frame ACK result would catch it
   within a fraction of a second while talking; not done yet.
-- **Green dot on the menu = a session exists,** not that the other board is
-  on right now. Connecting to a board that is off ends in `No answer`.
+- **Offline takes up to 6.5 s to show.** A board that just switched off
+  stays green until three pings are missed.
 - **Redraw time.** A full-screen redraw at 10 MHz SPI blocks the loop for
   about 100 ms. It happens only when the screen changes, and during a
   connection only the box and small fields redraw. Voice has a 300 ms

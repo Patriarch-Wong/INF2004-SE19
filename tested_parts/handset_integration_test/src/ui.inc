@@ -278,7 +278,8 @@ void draw_menu_row(uint8_t index)
         highlighted ? ST77XX_BLACK : ST77XX_WHITE);
     if (row.kind == row_kind::connect)
     {
-        // Green: a session with this handset is up, so it can be asked.
+        // Green: this handset is online (presence pings arriving), so it
+        // can be asked.
         lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
             ui_reachable[row.peer] ? listen_color : outline_color);
     }
@@ -387,18 +388,17 @@ void draw_status_values()
             continue;
         }
         const session::link &link = peers[id].link;
-        if (link.established())
+        const bool online = peer_online(id, millis());
+        if (online)
         {
-            snprintf(line, sizeof(line), "%s: session %08lX", device_name(id),
+            snprintf(line, sizeof(line), "%s: online %08lX", device_name(id),
                 static_cast<unsigned long>(link.session_id()));
         }
         else
         {
-            snprintf(line, sizeof(line), "%s: not reachable",
-                device_name(id));
+            snprintf(line, sizeof(line), "%s: offline", device_name(id));
         }
-        draw_field(line, 8, y, 1,
-            link.established() ? listen_color : muted_color, 224);
+        draw_field(line, 8, y, 1, online ? listen_color : muted_color, 224);
         y += 14;
     }
     y += 6;
@@ -459,7 +459,7 @@ talk_view current_view(uint32_t now)
     {
         return talk_view::talking;
     }
-    if (tx == tx_phase::stopping)
+    if (tx == tx_phase::stopping && !tx_yielded)
     {
         return talk_view::sending;
     }
@@ -880,7 +880,7 @@ void refresh(uint32_t now)
         {
             const menu_row &row = rows[i];
             const bool up = row.kind == row_kind::connect &&
-                can_send(row.peer);
+                peer_online(row.peer, now);
             if (row.kind == row_kind::connect && up != ui_reachable[row.peer])
             {
                 ui_reachable[row.peer] = up;
