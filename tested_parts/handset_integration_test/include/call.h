@@ -66,6 +66,7 @@ enum class end_reason : uint8_t
     no_answer,        // Nobody accepted in time.
     busy,             // The peer is connected to someone else.
     link_lost,        // Nothing from the connected peer for too long.
+    unreachable,      // The asked board went offline or rebooted.
 };
 
 const char *state_name(state value);
@@ -98,6 +99,11 @@ public:
     bool decline(uint32_t now);
     // Stops asking, or disconnects.
     bool hang_up(uint32_t now);
+    // The peer is gone (the firmware saw its presence pings stop, or a new
+    // session with it, meaning it rebooted). Ends whatever is in progress:
+    // asking ends as unreachable, otherwise as link_lost. A hang_up is
+    // still sent in case the peer hears it. False when idle.
+    bool lost(uint32_t now);
 
     // A message that opened under the session with `source`.
     void receive(uint8_t source, const message &content, uint32_t now);

@@ -96,6 +96,7 @@ const char *end_reason_name(end_reason value)
     case end_reason::no_answer: return "no answer";
     case end_reason::busy: return "peer busy";
     case end_reason::link_lost: return "link lost";
+    case end_reason::unreachable: return "peer not reachable";
     }
     return "unknown";
 }
@@ -194,6 +195,23 @@ bool machine::hang_up(uint32_t now)
     {
         finish(end_reason::hung_up_here, op_hang_up, now);
         return true;
+    }
+    return false;
+}
+
+bool machine::lost(uint32_t now)
+{
+    switch (status)
+    {
+    case state::calling:
+        finish(end_reason::unreachable, op_hang_up, now);
+        return true;
+    case state::ringing:
+    case state::connected:
+        finish(end_reason::link_lost, op_hang_up, now);
+        return true;
+    case state::idle:
+        break;
     }
     return false;
 }

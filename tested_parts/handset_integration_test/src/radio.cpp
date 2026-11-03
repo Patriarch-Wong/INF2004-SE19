@@ -23,6 +23,8 @@ constexpr size_t queue_depth = 32;
 QueueHandle_t receive_queue = nullptr;
 std::atomic<uint32_t> dropped_full{0};
 std::atomic<uint32_t> dropped_unknown{0};
+std::atomic<uint32_t> ack_failures[network_config::device_count + 1];
+std::atomic<uint32_t> ack_ok_ms[network_config::device_count + 1];
 uint8_t own_mac[6] = {};
 
 bool zero_mac(const uint8_t *mac)
@@ -54,6 +56,26 @@ void on_receive(const uint8_t *mac, const uint8_t *data, int length)
     if (xQueueSend(receive_queue, &frame, 0) != pdTRUE)
     {
         dropped_full.fetch_add(1);
+    }
+}
+
+// Runs in the Wi-Fi task once each unicast frame is acknowledged or has
+// failed every retry.
+void on_sent(const uint8_t *mac, esp_now_send_status_t status)
+{
+    const device *peer = mac ? find_device(mac) : nullptr;
+    if (!peer || peer->id > network_config::device_count)
+    {
+        return;
+    }
+    if (status == ESP_NOW_SEND_SUCCESS)
+    {
+        ack_ok_ms[peer->id].store(millis());
+        ack_failures[peer->id].store(0);
+    }
+    else
+    {
+        ack_failures[peer->id].fetch_add(1);
     }
 }
 
@@ -138,6 +160,10 @@ const char *start(uint8_t expected_id)
     if (!check(esp_now_register_recv_cb(on_receive), "Register receiver"))
     {
         return "Failed to register the receive callback";
+    }
+    if (!check(esp_now_register_send_cb(on_sent), "Register send result"))
+    {
+        return "Failed to register the send callback";
     }
     return nullptr;
 }
@@ -240,6 +266,15 @@ const char *configure(unsigned channel, unsigned rate_mbps)
 esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size)
 {
     return esp_now_send(mac, frame, size);
+}
+
+ack_state acks(uint8_t id)
+{
+    if (id > network_config::device_count)
+    {
+        return {0, 0};
+    }
+    return {ack_failures[id].load(), ack_ok_ms[id].load()};
 }
 
 uint32_t queue_drops()

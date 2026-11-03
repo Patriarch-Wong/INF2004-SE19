@@ -41,6 +41,16 @@ esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size);
 // success, or what failed.
 const char *configure(unsigned channel, unsigned rate_mbps);
 
+// Acknowledgements of unicast frames to device `id`, from ESP-NOW's send
+// callback: frames in a row the peer's radio never acknowledged (after the
+// MAC's retries), and millis() of the last acknowledged one (0 if none).
+struct ack_state
+{
+    uint32_t failures;
+    uint32_t last_ok_ms;
+};
+ack_state acks(uint8_t id);
+
 uint32_t queue_drops();
 uint32_t unknown_drops();
 

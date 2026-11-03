@@ -253,6 +253,50 @@ void test_no_answer_and_unreachable()
     check(a.last_end() == end_reason::no_answer, "unreachable peer: no answer");
 }
 
+// The firmware calls lost() when the asked board goes offline or reboots,
+// so asking does not wait until it is back and then ring there.
+void test_peer_lost()
+{
+    network net;
+    machine &a = net.boards[1];
+    machine &b = net.boards[2];
+    check(!a.lost(net.now), "lost() does nothing when idle");
+
+    net.down[2] = true;  // Goes off just after the request.
+    a.dial(2, 0x350, net.now);
+    net.run(3000);
+    check(a.lost(net.now) && a.current() == state::idle &&
+            a.last_end() == end_reason::unreachable,
+        "asking ends as unreachable");
+    net.reboot(2);
+    net.down[2] = false;
+    net.run(2000);
+    check(b.current() == state::idle && b.end_count() == 0,
+        "the board that came back is not asked");
+    check(net.delivered[2][op_request] == 0, "no old request reaches it");
+
+    a.dial(2, 0x351, net.now);
+    net.deliver();
+    check(b.current() == state::ringing && b.lost(net.now) &&
+            b.last_end() == end_reason::link_lost,
+        "the asked side drops a request from a lost asker");
+    net.deliver();
+    check(a.current() == state::idle &&
+            a.last_end() == end_reason::declined_there,
+        "and its hang_up ends the asking side");
+
+    a.dial(2, 0x352, net.now);
+    net.deliver();
+    b.answer(net.now);
+    net.deliver();
+    check(a.lost(net.now) && a.last_end() == end_reason::link_lost,
+        "a connection ends as link lost");
+    net.deliver();
+    check(b.current() == state::idle &&
+            b.last_end() == end_reason::hung_up_there,
+        "and the peer, if it hears, drops too");
+}
+
 void test_lost_accept()
 {
     network net;
@@ -472,6 +516,7 @@ int main()
     test_connect_and_disconnect();
     test_decline_and_cancel();
     test_no_answer_and_unreachable();
+    test_peer_lost();
     test_lost_accept();
     test_link_lost_and_reboot();
     test_glare_and_busy();

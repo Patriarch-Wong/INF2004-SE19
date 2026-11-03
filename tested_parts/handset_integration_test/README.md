@@ -10,7 +10,8 @@ phone call with a walkie-talkie inside:
    "roger" beep when you let go.
 3. **Disconnect.** CANCEL on either board ends the connection **on both**.
    If the link drops (a board is switched off, or walks out of range), both
-   sides drop the connection by themselves within 6 s.
+   sides drop the connection by themselves, usually within about 2 s and
+   at most 6 s.
 
 - **Voice:** the MAX9814 mic and PWM speaker chain from
   [mic_speaker_e2e_test2](../mic_speaker_e2e_test2/), with Opus,
@@ -122,8 +123,9 @@ Reasons on the Disconnected screen:
 | Shown | Meaning |
 | --- | --- |
 | You disconnected | CANCEL pressed here |
-| They disconnected | CANCEL pressed on the other board, or it rebooted |
-| Connection lost | Nothing from the other board for 6 s |
+| They disconnected | CANCEL pressed on the other board |
+| Connection lost | The other board's radio stopped acknowledging (about 2 s), nothing came from it for 6 s, or it rebooted |
+| Not reachable | The board you were asking went offline or rebooted |
 | Declined / You declined | The request was declined |
 | No answer | Nobody accepted within 30 s |
 | Missed request | The other board stopped asking before you answered |
@@ -152,14 +154,24 @@ Connection messages are a fourth payload kind inside the voice channel
 - **Disconnect reaches both sides.** The side that presses CANCEL drops at
   once and sends hang_up. If that message is lost, the other side's next
   heartbeat for the closed connection gets hang_up again.
-- **Link loss.** Each side drops the connection after 6 s with nothing from
-  the other. Voice frames count as well as heartbeats. If only one
-  direction fails, the side that stops hearing drops first and its hang_up
-  takes the other side down at the same moment.
-- **Reboots.** A rebooted board makes a new session at boot, then answers
-  the old connection's next heartbeat with hang_up. The other side shows
-  `They disconnected` about a second after the rebooted board is back up,
-  or `Connection lost` if the reboot takes longer than 6 s.
+- **Link loss.** The other board's radio acknowledges every frame it
+  receives (ESP-NOW unicast). If 3 frames in a row fail, with none
+  acknowledged for 2 s (`ack_lost_*`), the connection ends as `Connection
+  lost` and the log shows `stopped acknowledging (radio)`. Heartbeats and
+  presence pings keep frames going even when nobody talks. As a backstop,
+  each side also drops the connection after 6 s with nothing from the
+  other; voice frames count as well as heartbeats. If only one direction
+  fails, the side that notices first drops, and its hang_up takes the
+  other side down if it gets through.
+- **Leftover streams.** When a new connection starts, anything still
+  playing or draining from the last one is dropped (`RX cut`), so the new
+  connection can talk at once.
+- **Reboots.** A rebooted board makes a new session at boot. The other
+  side sees the session change and ends whatever it had with that board:
+  a connection shows `Connection lost` and a request shows `Not
+  reachable`, about a second after the rebooted board is back up (or
+  after 6 s offline, if the reboot takes longer). An old request never
+  rings on the rebooted board.
 - **Both connect at once:** the lower ID keeps asking, and the higher ID
   shows the request.
 
@@ -178,9 +190,14 @@ all count, and so does a fresh handshake.
   waiting 30 s for `No answer`.
 - The log shows `PEER N (Board N) online` / `offline` on each change, and
   the 10 s status line marks stale sessions `(offline)`.
-- A board that comes back goes green within about 2 s: after a reboot
-  through the new handshake, and after being out of range through the next
-  ping.
+- A board that comes back goes green quickly: after a reboot within
+  about a second, through the new handshake; after being out of range
+  within about 5 s, through the next ping.
+- A request or connection in progress ends when its board goes offline
+  or makes a new session (`check_call_peer`, log `LINK N ... ending`). So
+  a request sent just before the other board went off shows `Not
+  reachable` within 6.5 s. It isn't resent until the board comes back and
+  then rings there with nobody expecting it.
 
 `src/call.cpp` has no radio or timing code. `tests/call_test.cpp` runs it
 over a simulated link with:
@@ -290,13 +307,17 @@ Serial runs at 921,600 baud.
 | H3 | Connect: board 1 → `Connect Board 2`, OK on board 2 | Board 2 shows `Board 1 wants to connect` and beeps; both show Connected; both logs show `LINK connected` with the same id and session |
 | H4 | Talk both ways: hold OK on board 1 and speak, release; then board 2 | Sender TALKING, receiver `Board N is talking`, speech heard, roger beep, `RX_END ... intact=yes` |
 | H5 | Disconnect: CANCEL on board 2 | Board 2 `You disconnected`, board 1 `They disconnected` within a second; both back to the menu |
-| H6 | Link loss: connect, then unplug board 2 | Board 1 shows `Connection lost` within 6 s; after plugging back in and booting, board 2 is on its menu and can connect again |
+| H6 | Link loss: connect, then unplug board 2 | Board 1 shows `Connection lost` within about 3 s (log `stopped acknowledging (radio)`); after plugging back in and booting, board 2 is on its menu and can connect again |
 | H7 | Decline, stop asking, no answer | CANCEL on the request → board 1 `Declined`; CANCEL while connecting → board 2 `Missed request`; nobody answers → `No answer` after 30 s |
 | H8 | Known signal: connected, `test 30` on board 1, then on board 2 | `tools/check_streams.py` passes, as E1 in `mic_speaker_e2e_test` |
 | H9 | Alternating PTT for two minutes (design review) | No reset, no disconnect; every `RX_END` `intact=yes`; no sustained underruns in `report` |
 | H10 | New board: flash `board4` on a board whose MAC is not in slot 4 | Stops with `This MAC is not in network_config.h` and its MAC on screen; after adding the MAC and reflashing, it boots, and the others (rebuilt) list `Connect Board 4` |
 | H11 | Both press OK together, several times | Within a fraction of a second one board shows `Board N is talking` and logs `TX_YIELD`, while the other stays on `TALKING` and is heard from its first word. Either board can win. `report` counts `yields` |
 | H12 | Presence: on the menu, unplug board 2; plug it back in | Board 1's dot for Board 2 goes grey and logs `PEER 2 (Board 2) offline` within about 7 s; `Connect Board 2` then shows `not reachable` at once. After board 2 boots, the dot is green again within a few seconds and connecting works |
+| H13 | Request to a board that goes off: board 1 → `Connect Board 2`, then unplug board 2 before answering; plug it back in | Board 1 shows `Not reachable` within about 7 s (or about a second after board 2 is back, if sooner), logging `LINK 2 ... ending connecting`. Board 2 boots to its menu and does not ring |
+| H14 | Request guard: board 1 asks board 2 while board 2's user is pressing OK on its menu | Presses within 0.5 s of the request appearing log `BUTTON ignored: the request has just appeared` and do not accept. OK after that accepts |
+| H15 | Board 3 off (it is listed in slot 3) | Boards 1 and 2 log 10 `SESSION hello -> 3`, then `SESSION 3 not answering: retrying every 15 s` and go quiet. H4 and H9 voice is unaffected |
+| H16 | Reconnect at once: connect, hold OK on board 1 and speak, press CANCEL on board 2 mid-sentence, connect again right away | The new connection can talk at once; any leftover logs `RX cut` and no roger beep |
 
 H8 from serial with `tools/capture_logs.py`:
 
@@ -327,16 +348,19 @@ The audio chain, gate strictness and "no sound" checks are as in
 
 ## Limits
 
+Open issues and planned fixes, mostly for more than two boards, are
+tracked in [ISSUES.md](ISSUES.md).
+
 - **Not run on hardware yet.** The D-pad tests are also still waiting on
   hardware validation, including whether GPIO20 and GPIO0 work as buttons
   on these boards.
 - **Half duplex.** One side talks at a time. Full duplex would need echo
   cancellation.
-- **Link loss takes up to 6 s to notice.** Until then the sender can talk
-  into the air. Reading ESP-NOW's per-frame ACK result would catch it
-  within a fraction of a second while talking; not done yet.
-- **Offline takes up to 6.5 s to show.** A board that just switched off
-  stays green until three pings are missed.
+- **Link loss takes about 2 s to notice** (radio acknowledgements), up to
+  6 s if acknowledgements still get through but nothing else does.
+- **Offline takes up to 6.5 s to show on the menu.** A board that just
+  switched off stays green until its pings stop or three of ours go
+  unacknowledged.
 - **Redraw time.** A full-screen redraw at 10 MHz SPI blocks the loop for
   about 100 ms. It happens only when the screen changes, and during a
   connection only the box and small fields redraw. Voice has a 300 ms
@@ -349,9 +373,14 @@ The audio chain, gate strictness and "no sound" checks are as in
   (the user's decision), like `opus_broadcast_test`. Anyone on the channel
   can hear it, and it must be kept apart on receive, so a plaintext frame
   is never accepted as a connection's voice.
-- **Sessions to absent boards.** A board retries the session handshake
-  with every provisioned board that is off, once a second (`SESSION hello
-  -> 3 (retry)` in the log). That's harmless, but noisy.
+- **Absent boards are tried slowly.** The radio retries every frame to an
+  absent board, and voice waits behind it. So a board sends 10 session
+  hellos a second apart to a board that is off, then one every 15 s
+  (`SESSION 3 not answering: retrying every 15 s`). Presence pings to an
+  offline board go every 5 s instead of 2 s. A rebooted board still
+  connects within about a second, because it sends hellos at boot and the
+  lower ID answers at once. A board that was never seen and comes into
+  range can take up to 15 s to show.
 - **Boards 3–5 untested.** Only boards 1 and 2 have the handset parts wired.
   If board 3 runs other firmware on channel 11, its frames now pass the MAC
   allowlist and show up as `REJECT` lines.

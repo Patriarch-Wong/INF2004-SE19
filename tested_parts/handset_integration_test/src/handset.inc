@@ -96,6 +96,7 @@ uint32_t rx_stale = 0;
 uint32_t rx_last_end_ms = 0;  // When the last incoming stream ended.
 uint32_t rx_not_in_call = 0;
 bool rx_end_seen = false;
+bool rx_cut = false;  // Ended early by drop_old_streams(); no roger beep.
 std::atomic<int64_t> rx_play_at_us{0};  // 0 when no stream.
 std::atomic<uint32_t> rx_generation{0};
 std::atomic<bool> rx_done{false};
@@ -126,6 +127,10 @@ call::state shown_call = call::state::idle;
 uint32_t shown_call_ends = 0;
 uint32_t call_send_drops = 0;
 uint32_t last_ring_ms = 0;
+// The session with calls.peer() when the current connection (call_id)
+// began; 0 when idle.
+uint32_t call_session = 0;
+uint32_t call_session_for = 0;
 
 // Microphone recording for `micdump`.
 int16_t *dump_buffer = nullptr;
@@ -159,12 +164,25 @@ static_assert(kind_presence > voice_link::kind_end &&
         kind_presence != call::kind_call,
     "presence kind clashes with another payload kind");
 
-// A session is up and something from the handset opened recently. A
-// session alone says only that the handset was there once.
+// The peer's radio stopped acknowledging this board's frames: several
+// failed in a row and none got through for ack_lost_ms. Signed, because
+// the send callback can store a time later than the loop's `now`.
+bool acks_lost(uint8_t peer, uint32_t now)
+{
+    const radio::ack_state acks = radio::acks(peer);
+    return acks.failures >= app_config::ack_lost_failures &&
+        static_cast<int32_t>(now - acks.last_ok_ms) >=
+            static_cast<int32_t>(app_config::ack_lost_ms);
+}
+
+// A session is up, something from the handset opened recently, and its
+// radio still acknowledges ours. A session alone says only that the
+// handset was there once.
 bool peer_online(uint8_t peer, uint32_t now)
 {
     return can_send(peer) &&
-        now - peers[peer].last_accept_ms < app_config::presence_timeout_ms;
+        now - peers[peer].last_accept_ms < app_config::presence_timeout_ms &&
+        !acks_lost(peer, now);
 }
 
 esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size)
@@ -781,8 +799,10 @@ void finish_receive()
             result.quality.worst_window_snr_db);
     }
     Serial.println();
+    const bool cut = rx_cut;
+    rx_cut = false;
     // Roger beep: the other side has finished, so it is this user's turn.
-    if (app_config::roger_tone_ms > 0)
+    if (app_config::roger_tone_ms > 0 && !cut)
     {
         speaker::tone(app_config::roger_tone_hz, app_config::roger_tone_ms);
     }
@@ -941,6 +961,37 @@ void send_call_messages()
     }
 }
 
+// A new connection: drop what is left of the last one's streams, so this
+// board can talk at once and the new board's first words aren't dropped
+// (ISSUES.md C2). An incoming stream that began after the connection did
+// belongs to it and is kept.
+void drop_old_streams()
+{
+    if (tx == tx_phase::draining)
+    {
+        finish_send();  // Stop answering NACKs for the old stream.
+    }
+    bool cut = false;
+    uint32_t stream = 0;
+    {
+        rx_guard hold;
+        if (incoming.active() && !incoming.finished() &&
+            static_cast<int32_t>(rx_started_ms - calls.since_ms()) < 0)
+        {
+            // The player stops at the next frame and ends the stream.
+            incoming.set_end(incoming.cursor(), 0);
+            stream = incoming.stream_id();
+            cut = true;
+        }
+    }
+    if (cut)
+    {
+        rx_cut = true;
+        Serial.printf("RX cut stream=%08lX: from the last connection\n",
+            static_cast<unsigned long>(stream));
+    }
+}
+
 // Logs each change of connection state.
 void report_call(uint32_t now)
 {
@@ -973,6 +1024,7 @@ void report_call(uint32_t now)
         break;
     case call::state::connected:
         peer_id = calls.peer();
+        drop_old_streams();
         Serial.printf("LINK connected to %u (%s) | id %08lX | session %08lX\n",
             calls.peer(), device_name(calls.peer()),
             static_cast<unsigned long>(calls.call_id()),
@@ -994,8 +1046,11 @@ void service_presence(uint32_t now)
             continue;
         }
         peer_state &state = peers[peer];
-        if (can_send(peer) &&
-            now - state.last_presence_ms >= app_config::presence_ping_ms)
+        // Offline boards less often (ISSUES.md B1); one back in range is
+        // found through its own pings.
+        const uint32_t period = state.shown_online ?
+            app_config::presence_ping_ms : app_config::presence_offline_ping_ms;
+        if (can_send(peer) && now - state.last_presence_ms >= period)
         {
             state.last_presence_ms = now;
             const uint8_t payload[] = {kind_presence};
@@ -1011,8 +1066,43 @@ void service_presence(uint32_t now)
     }
 }
 
+// Ends the connection if its board is gone: its presence pings stopped,
+// or it made a new session, which means it rebooted. Without this a
+// request to a board that just went off keeps being resent, and rings
+// there the moment the board is back.
+void check_call_peer(uint32_t now)
+{
+    if (calls.current() == call::state::idle)
+    {
+        call_session = call_session_for = 0;
+        return;
+    }
+    const uint8_t peer = calls.peer();
+    const uint32_t session = peers[peer].link.session_id();
+    if (calls.call_id() != call_session_for)
+    {
+        // A new connection, or the same one under a new ID (both asked at
+        // once, or the asker asked again): this session is the one in use.
+        call_session_for = calls.call_id();
+        call_session = session;
+    }
+    const bool rebooted = session != call_session;
+    if (!rebooted && peer_online(peer, now))
+    {
+        return;
+    }
+    Serial.printf("LINK %u (%s) %s: ending %s\n", peer, device_name(peer),
+        rebooted ? "made a new session (rebooted)" :
+            acks_lost(peer, now) ? "stopped acknowledging (radio)" :
+            "went offline",
+        call::state_name(calls.current()));
+    calls.lost(now);
+    call_session = call_session_for = 0;
+}
+
 void service_calls(uint32_t now)
 {
+    check_call_peer(now);
     calls.tick(now);
     if (calls.current() != call::state::connected && tx == tx_phase::talking)
     {

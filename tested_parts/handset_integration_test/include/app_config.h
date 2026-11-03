@@ -146,6 +146,26 @@ constexpr uint32_t session_resync_ms = 5000;
 constexpr uint32_t presence_ping_ms = 2000;
 constexpr uint32_t presence_timeout_ms = 6500;
 
+// Boards that don't answer are tried less often (ISSUES.md B1). The radio
+// retries every frame to an absent board, and voice frames wait behind
+// those retries. A board that boots sends hellos itself, and the lower ID
+// answers a hello with its own at once, so a reboot is still found within
+// about a second.
+constexpr uint32_t session_fast_hellos = 10;  // At session_retry_ms.
+constexpr uint32_t session_slow_retry_ms = 15000;
+constexpr uint32_t presence_offline_ping_ms = 5000;
+
+// Link loss from the radio's acknowledgements (ISSUES.md C5): the peer's
+// radio acknowledges every unicast frame it receives. This many failures
+// in a row, with nothing acknowledged for this long, means the board is
+// gone. That ends a connection in about 2 s instead of link_lost's 6 s.
+constexpr uint32_t ack_lost_failures = 3;
+constexpr uint32_t ack_lost_ms = 2000;
+
+// The request screen ignores OK and CANCEL this long after it appears, so
+// a press meant for the screen before can't accept or decline (B3).
+constexpr uint32_t ui_request_guard_ms = 500;
+
 // Tasks. One codec task makes every Opus call (the library shares scratch
 // memory); it runs on core 0 below Wi-Fi. Mic and speaker tasks move
 // samples and must not wait on anything else.

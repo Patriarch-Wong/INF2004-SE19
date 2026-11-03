@@ -55,6 +55,7 @@ struct peer_state
 {
     session::link link;
     uint32_t last_hello_ms = 0;
+    uint32_t hellos = 0;  // Sent since the handshake started.
     uint32_t last_accept_ms = 0;
     uint32_t last_resync_ms = 0;
     uint32_t last_presence_ms = 0;  // Last presence ping sent.
@@ -141,6 +142,7 @@ void start_session(uint8_t peer, uint32_t now)
         send_control(control_frame::type_session, peer,
             radio::find_device(peer)->mac, hello);
         peers[peer].last_hello_ms = now;
+        peers[peer].hellos = 1;
         Serial.printf("SESSION hello -> %u\n", peer);
     }
 }
@@ -151,14 +153,29 @@ void service_sessions(uint32_t now)
     {
         peer_state &state = peers[peer];
         control_frame::message hello = {};
-        if (state.link.initiating() &&
-            now - state.last_hello_ms >= app_config::session_retry_ms &&
+        // Fast at first, then slowly: a board that is off would only hold
+        // up this board's other frames (ISSUES.md B1).
+        const bool slow = state.hellos >= app_config::session_fast_hellos;
+        const uint32_t period = slow ? app_config::session_slow_retry_ms :
+            app_config::session_retry_ms;
+        if (state.link.initiating() && now - state.last_hello_ms >= period &&
             state.link.hello(&hello))
         {
             send_control(control_frame::type_session, peer,
                 radio::find_device(peer)->mac, hello);
             state.last_hello_ms = now;
-            Serial.printf("SESSION hello -> %u (retry)\n", peer);
+            ++state.hellos;
+            if (state.hellos == app_config::session_fast_hellos)
+            {
+                Serial.printf("SESSION %u not answering: retrying every "
+                              "%lu s\n",
+                    peer, static_cast<unsigned long>(
+                        app_config::session_slow_retry_ms / 1000));
+            }
+            else if (!slow)
+            {
+                Serial.printf("SESSION hello -> %u (retry)\n", peer);
+            }
         }
     }
 }
@@ -198,6 +215,16 @@ void handle_session(const radio::received_frame &frame,
     {
         reject(frame, "no pair key for source");
         return;
+    }
+    if (content.step == static_cast<uint8_t>(session::step::hello) &&
+        link.initiating())
+    {
+        // The peer is back. If this board has the lower ID it ignores the
+        // hello and its own must win, so send it now rather than at the
+        // slow retry.
+        peer_state &state = peers[fields.source];
+        state.hellos = 0;
+        state.last_hello_ms = millis() - app_config::session_retry_ms;
     }
     uint8_t nonce[session::nonce_size];
     esp_fill_random(nonce, sizeof(nonce));

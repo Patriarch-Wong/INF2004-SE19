@@ -578,6 +578,7 @@ const char *end_text(call::end_reason reason)
     case call::end_reason::no_answer: return "No answer";
     case call::end_reason::busy: return "Busy";
     case call::end_reason::link_lost: return "Connection lost";
+    case call::end_reason::unreachable: return "Not reachable";
     case call::end_reason::none: break;
     }
     return "Disconnected";
@@ -607,6 +608,8 @@ const char *screen_name(screen value)
     return "none";
 }
 
+uint32_t ui_screen_since_ms = 0;  // When the current screen finished drawing.
+
 void show(screen next, uint32_t now)
 {
     const uint32_t started = millis();
@@ -626,6 +629,7 @@ void show(screen next, uint32_t now)
     // Evidence for the design review's 400 ms UI response target.
     Serial.printf("UI screen=%s draw_ms=%lu\n", screen_name(next),
         static_cast<unsigned long>(millis() - started));
+    ui_screen_since_ms = millis();
 }
 
 // The screen the connection state calls for.
@@ -773,7 +777,13 @@ void handle_press(button_id id, uint32_t now)
         }
         break;
     case screen::request:
-        if (id == button_id::confirm)
+        // Signed: `now` is from before the screen was drawn.
+        if (static_cast<int32_t>(now - ui_screen_since_ms) <
+            static_cast<int32_t>(app_config::ui_request_guard_ms))
+        {
+            Serial.println("BUTTON ignored: the request has just appeared");
+        }
+        else if (id == button_id::confirm)
         {
             calls.answer(now);
         }
