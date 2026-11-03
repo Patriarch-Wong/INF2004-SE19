@@ -166,6 +166,17 @@ constexpr uint32_t ack_lost_ms = 2000;
 // a press meant for the screen before can't accept or decline (B3).
 constexpr uint32_t ui_request_guard_ms = 500;
 
+// Hello text: RIGHT on a `Connect Board N` row, or while connected, sends
+// "Hello from Board N", sealed under the session key like voice. The
+// receiving board shows it in a banner for text_show_ms, with a short beep
+// unless voice is playing or it is talking. Presses closer together than
+// text_min_gap_ms are ignored.
+constexpr uint32_t text_show_ms = 3000;
+constexpr uint32_t text_min_gap_ms = 1000;
+constexpr uint32_t text_tone_hz = 1500;
+constexpr uint32_t text_tone_ms = 60;
+constexpr size_t text_max_chars = 24;  // Longer texts are cut.
+
 // Tasks. One codec task makes every Opus call (the library shares scratch
 // memory); it runs on core 0 below Wi-Fi. Mic and speaker tasks move
 // samples and must not wait on anything else.

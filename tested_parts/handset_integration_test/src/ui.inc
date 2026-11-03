@@ -3,11 +3,11 @@
 // D-pad and ST7789 screen, from dpad_menu_test. Screens:
 //
 //   Menu          "Connect <name>" per handset (scrolls past 4 rows),
-//                 Volume, Status
+//                 Volume, Status; RIGHT on a handset says hello
 //   Connecting    waiting for the other handset to accept; CANCEL stops
 //   Request       who wants to connect; OK accepts, CANCEL declines
-//   Connected     hold OK (or PTT) to talk, UP/DOWN volume,
-//                 CANCEL disconnects (both sides drop)
+//   Connected     hold OK (or PTT) to talk, UP/DOWN volume, RIGHT says
+//                 hello, CANCEL disconnects (both sides drop)
 //   Disconnected  why; any button or 3 s returns to the menu
 //   Volume        UP/RIGHT louder, DOWN/LEFT quieter, CANCEL back
 //   Status        IDs, sessions and counters, CANCEL back
@@ -123,6 +123,15 @@ char ui_notice_text[20] = {};
 uint32_t ui_notice_ms = 0;
 bool ui_notice_on = false;
 bool ui_reachable[max_id + 1] = {};
+// Hello banner over the hint lines, on any screen.
+char ui_toast_text[app_config::text_max_chars + 1] = {};
+uint16_t ui_toast_color = 0;
+uint32_t ui_toast_ms = 0;
+bool ui_toast_on = false;
+bool ui_toast_drawn = false;
+uint32_t ui_text_seen = 0;  // text_in_count already shown.
+const char *ui_hint_first = nullptr;  // Last hints drawn, to restore.
+const char *ui_hint_second = nullptr;
 
 // Last values drawn in place, so unchanged ones are not redrawn.
 talk_view ui_drawn_view = talk_view::idle;
@@ -184,6 +193,8 @@ void draw_title(const char *title, uint16_t color)
 
 void draw_hints(const char *first, const char *second)
 {
+    ui_hint_first = first;
+    ui_hint_second = second;
     if (first)
     {
         draw_text(first, 8, 212, 1, muted_color);
@@ -285,10 +296,33 @@ void draw_menu_row(uint8_t index)
     }
 }
 
+bool toast_showing(uint32_t now)
+{
+    if (ui_toast_on && static_cast<int32_t>(now - ui_toast_ms) >=
+            static_cast<int32_t>(app_config::text_show_ms))
+    {
+        ui_toast_on = false;
+    }
+    return ui_toast_on;
+}
+
+void toast(const char *text, uint16_t color, uint32_t now)
+{
+    snprintf(ui_toast_text, sizeof(ui_toast_text), "%s", text);
+    ui_toast_color = color;
+    ui_toast_ms = now;
+    ui_toast_on = true;
+    ui_toast_drawn = false;  // Drawn (again) by service_toast().
+}
+
 // The menu's first hint line, replaced by a notice ("Board 2 not
-// reachable") while one shows.
+// reachable") while one shows. Not drawn under the hello banner.
 void draw_menu_notice(uint32_t now)
 {
+    if (toast_showing(now))
+    {
+        return;
+    }
     if (notice_showing(now))
     {
         char line[40];
@@ -346,7 +380,7 @@ void draw_menu(uint32_t now)
     draw_title("Menu", title_color);
     draw_menu_rows();
     draw_menu_notice(now);
-    draw_hints(nullptr, "Green dot: reachable");
+    draw_hints(nullptr, "RIGHT: say hello   Green: online");
 }
 
 // Volume and status pages
@@ -570,7 +604,8 @@ void draw_connected(uint32_t now)
     draw_talk_box(now);
     draw_call_volume();
     draw_last_heard(now);
-    draw_hints("Hold OK: talk   UP/DOWN: volume", "CANCEL: disconnect");
+    draw_hints("Hold OK: talk   UP/DOWN: volume",
+        "RIGHT: say hello   CANCEL: disconnect");
 }
 
 // Disconnected
@@ -640,6 +675,56 @@ void show(screen next, uint32_t now)
     Serial.printf("UI screen=%s draw_ms=%lu\n", screen_name(next),
         static_cast<unsigned long>(millis() - started));
     ui_screen_since_ms = millis();
+    ui_toast_drawn = false;  // The new screen covered it.
+}
+
+// The banner covers the two hint lines at the bottom of every screen.
+constexpr int16_t toast_top = 206;
+
+void draw_toast()
+{
+    lcd.fillRoundRect(4, toast_top, lcd.width() - 8, lcd.height() - toast_top
+        - 2, 6, ui_toast_color);
+    const uint8_t size = text_width(ui_toast_text, 2) <= lcd.width() - 16 ?
+        2 : 1;
+    draw_centered(ui_toast_text,
+        toast_top + (lcd.height() - toast_top - 2 - 8 * size) / 2, size,
+        ST77XX_BLACK);
+}
+
+// Shows a new incoming hello, draws the banner over the current screen,
+// and puts the hint lines back when it times out.
+void service_toast(uint32_t now)
+{
+    if (text_in_count != ui_text_seen)
+    {
+        ui_text_seen = text_in_count;
+        toast(text_in, highlight_color, now);
+    }
+    if (shown == screen::none)
+    {
+        return;
+    }
+    if (toast_showing(now))
+    {
+        if (!ui_toast_drawn)
+        {
+            draw_toast();
+            ui_toast_drawn = true;
+        }
+        return;
+    }
+    if (ui_toast_drawn)
+    {
+        ui_toast_drawn = false;
+        lcd.fillRect(0, toast_top, lcd.width(), lcd.height() - toast_top,
+            ST77XX_BLACK);
+        if (shown == screen::menu)
+        {
+            draw_menu_notice(now);
+        }
+        draw_hints(ui_hint_first, ui_hint_second);
+    }
 }
 
 // The screen the connection state calls for.
@@ -686,6 +771,23 @@ void move_selection(int step)
     }
     draw_menu_row(previous);
     draw_menu_row(selected);
+}
+
+// RIGHT on a handset row, or while connected.
+void say_hello(uint8_t peer, uint32_t now)
+{
+    switch (send_hello(peer, now))
+    {
+    case text_result::sent:
+        toast("Hello sent", listen_color, now);
+        break;
+    case text_result::offline:
+        toast("Not reachable", talk_color, now);
+        refused_beep();
+        break;
+    case text_result::too_soon:
+        break;  // A second press within a second: the first is on its way.
+    }
 }
 
 void change_volume(int step)
@@ -737,7 +839,14 @@ void handle_press(button_id id, uint32_t now)
     switch (shown)
     {
     case screen::menu:
-        if (back || forward)
+        if (id == button_id::right)
+        {
+            if (rows[selected].kind == row_kind::connect)
+            {
+                say_hello(rows[selected].peer, now);
+            }
+        }
+        else if (back || forward)
         {
             move_selection(back ? -1 : 1);
         }
@@ -807,13 +916,17 @@ void handle_press(button_id id, uint32_t now)
         {
             ptt_down_from_ui(now);
         }
-        else if (id == button_id::up || id == button_id::right)
+        else if (id == button_id::up)
         {
             change_volume(1);
         }
         else if (id == button_id::down || id == button_id::left)
         {
             change_volume(-1);
+        }
+        else if (id == button_id::right)
+        {
+            say_hello(calls.peer(), now);
         }
         else if (id == button_id::cancel)
         {
@@ -989,6 +1102,10 @@ void print_ui(uint32_t now)
     {
         Serial.printf(" | notice \"%s %s\"", ui_notice_title,
             ui_notice_text);
+    }
+    if (toast_showing(now))
+    {
+        Serial.printf(" | banner \"%s\"", ui_toast_text);
     }
     Serial.printf(" | volume %u\n", speaker::volume());
 }
@@ -1220,7 +1337,10 @@ void service_ui(uint32_t now)
     if (next != shown)
     {
         show(next, now);
-        return;
     }
-    refresh(now);
+    else
+    {
+        refresh(now);
+    }
+    service_toast(now);
 }

@@ -121,6 +121,13 @@ uint32_t last_played = 0;
 bool last_intact = false;
 
 
+// Hello text. The UI shows text_in when text_in_count changes.
+char text_in[app_config::text_max_chars + 1] = {};
+uint8_t text_from = 0;
+uint32_t text_in_count = 0;
+bool text_sent_once = false;
+uint32_t text_sent_ms = 0;
+
 // Connections.
 call::machine calls;
 call::state shown_call = call::state::idle;
@@ -186,14 +193,14 @@ bool peer_online(uint8_t peer, uint32_t now)
         !acks_lost(peer, now);
 }
 
-esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size)
+esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size,
+    uint8_t type = secure_message::type_voice)
 {
     uint8_t frame[secure_message::max_frame_size] = {};
     size_t frame_size = 0;
     uint32_t counter = 0;
-    const status sealed = peers[peer].link.seal(e2e_keys::network,
-        secure_message::type_voice, payload, size, frame, sizeof(frame),
-        &frame_size, &counter);
+    const status sealed = peers[peer].link.seal(e2e_keys::network, type,
+        payload, size, frame, sizeof(frame), &frame_size, &counter);
     if (sealed != status::ok)
     {
         Serial.printf("SEAL_ERROR %s\n", secure_message::status_name(sealed));
@@ -848,6 +855,71 @@ void service_receiver(uint32_t now)
     }
 }
 
+// Hello text
+
+enum class text_result : uint8_t
+{
+    sent,
+    offline,
+    too_soon,
+};
+
+// Sends "Hello from <this board>" to `peer`, whether or not connected to it.
+text_result send_hello(uint8_t peer, uint32_t now)
+{
+    if (text_sent_once &&
+        static_cast<int32_t>(now - text_sent_ms) <
+            static_cast<int32_t>(app_config::text_min_gap_ms))
+    {
+        return text_result::too_soon;
+    }
+    if (!valid_peer(peer) || !peer_online(peer, now))
+    {
+        Serial.printf("TEXT refused: %u is not reachable\n", peer);
+        return text_result::offline;
+    }
+    char text[app_config::text_max_chars + 1];
+    snprintf(text, sizeof(text), "Hello from %s", device_name(own_id));
+    if (send_payload(peer, reinterpret_cast<const uint8_t *>(text),
+            strlen(text), secure_message::type_text) != ESP_OK)
+    {
+        Serial.printf("TEXT send failed to %u\n", peer);
+        return text_result::offline;
+    }
+    text_sent_once = true;
+    text_sent_ms = now;
+    Serial.printf("TEXT sent to %u (%s): \"%s\"\n", peer, device_name(peer),
+        text);
+    return text_result::sent;
+}
+
+// Keeps printable ASCII only (the LCD font), cut to text_max_chars.
+void on_text(uint8_t source, const uint8_t *payload, size_t size)
+{
+    size_t n = 0;
+    for (size_t i = 0; i < size && n < app_config::text_max_chars; ++i)
+    {
+        const uint8_t c = payload[i];
+        text_in[n++] = c >= 0x20 && c <= 0x7E ? static_cast<char>(c) : '?';
+    }
+    text_in[n] = '\0';
+    if (n == 0)
+    {
+        return;
+    }
+    text_from = source;
+    ++text_in_count;
+    Serial.printf("TEXT from %u (%s): \"%s\"\n", source, device_name(source),
+        text_in);
+    // A beep would play over incoming voice, or go out through this
+    // board's own microphone while it talks.
+    if (app_config::text_tone_ms > 0 && tx == tx_phase::idle &&
+        rx_play_at_us.load() == 0)
+    {
+        speaker::tone(app_config::text_tone_hz, app_config::text_tone_ms);
+    }
+}
+
 void handle_data(const radio::received_frame &frame,
     const secure_message::header &fields, uint32_t now)
 {
@@ -871,6 +943,11 @@ void handle_data(const radio::received_frame &frame,
     }
     ++accepted_count;
     last_accept_ms = peers[fields.source].last_accept_ms = now;
+    if (opened.type == secure_message::type_text)
+    {
+        on_text(fields.source, payload, size);
+        return;
+    }
     if (opened.type != secure_message::type_voice)
     {
         return;
@@ -1416,6 +1493,14 @@ bool run_handset_command(const char *line, uint32_t now)
     else if (sscanf(line, "connect %u %c", &value, &extra) == 1)
     {
         place_call(static_cast<uint8_t>(value), now);
+    }
+    else if (sscanf(line, "hello %u %c", &value, &extra) == 1)
+    {
+        if (send_hello(static_cast<uint8_t>(value), now) ==
+            text_result::too_soon)
+        {
+            Serial.println("TEXT wait: one hello per second");
+        }
     }
     else if (strcmp(line, "accept") == 0)
     {

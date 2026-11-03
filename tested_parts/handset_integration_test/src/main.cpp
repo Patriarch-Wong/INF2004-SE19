@@ -343,7 +343,8 @@ void list_keys()
 
 void print_help()
 {
-    Serial.println("Link: connect N | accept | decline | disconnect | link");
+    Serial.println("Link: connect N | accept | decline | disconnect | link "
+                   "| hello N");
     Serial.println("Voice (connected): hold OK to talk | talk [S] | test [S] "
                    "| stop | buffer MS | red on|off");
     Serial.println("Audio: + | - | vol N | ] | [ | gate R | m | r | gain X | "

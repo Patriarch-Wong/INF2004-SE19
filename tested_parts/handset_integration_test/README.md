@@ -12,6 +12,13 @@ phone call with a walkie-talkie inside:
    If the link drops (a board is switched off, or walks out of range), both
    sides drop the connection by themselves, usually within about 2 s and
    at most 6 s.
+4. **Say hello.** RIGHT sends **"Hello from Board 1"** as an encrypted
+   text, to the board you're connected to, or from the menu to the
+   selected `Connect Board N` without connecting. The other board shows it
+   in a banner for 3 s, on whatever screen it's on, with a short beep
+   (skipped while voice is playing or it is talking). The sender sees
+   `Hello sent`, or `Not reachable` if that board is offline. One hello
+   per second.
 
 - **Voice:** the MAX9814 mic and PWM speaker chain from
   [mic_speaker_e2e_test2](../mic_speaker_e2e_test2/), with Opus,
@@ -89,10 +96,10 @@ others and set `ptt_pin` to a free GPIO (for example 13 or 2) in
 
 | Screen | Shows | Buttons |
 | --- | --- | --- |
-| Menu | `Connect Board N` for each other provisioned board (green dot = online now, see Presence), `Volume`, `Status`; scrolls when there are more than 4 rows | UP/LEFT, DOWN/RIGHT choose; OK selects |
+| Menu | `Connect Board N` for each other provisioned board (green dot = online now, see Presence), `Volume`, `Status`; scrolls when there are more than 4 rows | UP/LEFT, DOWN choose; OK selects; **RIGHT on `Connect Board N` says hello** to that board without connecting |
 | Connecting | Asking Board 2, time waiting | CANCEL stops asking |
 | Request | **Who wants to connect**, "verified by pair key"; the speaker beeps every 1.5 s | OK accepts, CANCEL declines |
-| Connected | Peer name, connection time, talk box, volume, last heard | Hold OK (or PTT) to talk; UP/RIGHT, DOWN/LEFT volume; **CANCEL disconnects** |
+| Connected | Peer name, connection time, talk box, volume, last heard | Hold OK (or PTT) to talk; UP louder, DOWN/LEFT quieter; **RIGHT says hello**; **CANCEL disconnects** |
 | Disconnected | Peer and reason | Any button, or 3 s, back to the menu |
 | Volume | 1–32 with a bar | UP/RIGHT louder, DOWN/LEFT quieter, CANCEL back |
 | Status | ID, MAC, channel, online/offline and session per handset, frame counters, uptime | CANCEL back |
@@ -319,6 +326,7 @@ Serial runs at 921,600 baud.
 | H14 | Request guard: board 1 asks board 2 while board 2's user is pressing OK on its menu | Presses within 0.5 s of the request appearing log `BUTTON ignored: the request has just appeared` and do not accept. OK after that accepts |
 | H15 | Board 3 off (it is listed in slot 3) | Boards 1 and 2 log 10 `SESSION hello -> 3`, then `SESSION 3 not answering: retrying every 15 s` and go quiet. H4 and H9 voice is unaffected |
 | H16 | Reconnect at once: connect, hold OK on board 1 and speak, press CANCEL on board 2 mid-sentence, connect again right away | The new connection can talk at once; any leftover logs `RX cut` and no roger beep |
+| H17 | Hello (passed 2026-11-03, run C): RIGHT on board 1's menu (`Connect Board 2` selected); then connect, and RIGHT on each board; RIGHT twice quickly; RIGHT to an offline board | Board 2 shows `Hello from Board 1` in a banner for about 3 s and beeps (log `TEXT from 1`); the hints come back after. Connected: works both ways, also while the other side talks (no beep then). A second press within 1 s is ignored. Offline: `Not reachable` |
 
 H8 from serial with `tools/capture_logs.py`:
 
@@ -335,6 +343,7 @@ python3 tools/check_streams.py evidence/h8_b1.txt evidence/h8_b2.txt
 | Command | Does |
 | --- | --- |
 | `connect N` | Ask handset N to connect (as `Connect Board N` on the menu) |
+| `hello N` | Send "Hello from Board X" to handset N (as RIGHT on the menu); logs `TEXT sent` here and `TEXT from` there |
 | `accept` / `decline` | Answer a request |
 | `disconnect` | Disconnect, or stop asking |
 | `link` | Connection state, peer, id |
