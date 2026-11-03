@@ -326,7 +326,7 @@ Serial runs at 921,600 baud.
 | H14 | Request guard: board 1 asks board 2 while board 2's user is pressing OK on its menu | Presses within 0.5 s of the request appearing log `BUTTON ignored: the request has just appeared` and do not accept. OK after that accepts |
 | H15 | Board 3 off (it is listed in slot 3) | Boards 1 and 2 log 10 `SESSION hello -> 3`, then `SESSION 3 not answering: retrying every 15 s` and go quiet. H4 and H9 voice is unaffected |
 | H16 | Reconnect at once: connect, hold OK on board 1 and speak, press CANCEL on board 2 mid-sentence, connect again right away | The new connection can talk at once; any leftover logs `RX cut` and no roger beep |
-| H17 | Hello: connect, then RIGHT on each board; RIGHT twice quickly; RIGHT while the other side talks; `hello` and RIGHT on the menu (not connected) | The other board shows `Hello from Board N` in a banner for about 3 s and beeps (log `TEXT from N`), and the hints come back after. It works both ways, and also while the other side talks (no beep then). A second press within 1 s is ignored. Not connected: `TEXT refused: not connected`, and RIGHT on the menu just moves the selection |
+| H17 | Hello (passed 2026-11-03, run D): connect, then RIGHT on each board; RIGHT twice quickly; RIGHT while the other side talks; `hello` and RIGHT on the menu (not connected) | The other board shows `Hello from Board N` in a banner for about 3 s and beeps (log `TEXT from N`), and the hints come back after. It works both ways, and also while the other side talks (no beep then). A second press within 1 s is ignored. Not connected: `TEXT refused: not connected`, and RIGHT on the menu just moves the selection |
 
 H8 from serial with `tools/capture_logs.py`:
 
