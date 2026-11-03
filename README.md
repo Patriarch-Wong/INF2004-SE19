@@ -41,6 +41,7 @@ INF2004-SE19/
     ├── espnow_sd_test/       One-way ESP-NOW transfer saved and verified on SD
     ├── lora_test/            Core1121 868 MHz LoRa broadcast send and receive
     ├── mic_speaker_e2e_test/ Mic on one board to speaker on another, encrypted
+    ├── mic_speaker_e2e_test2/ mic_speaker_e2e_test with auto-unmute on incoming audio
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
     └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
 ```
@@ -61,6 +62,7 @@ measured results.
 | ICS43434 I2S MEMS microphone | `mictospeaker_test` |
 | YwRobot powered speaker module | `mictospeaker_test` |
 | MAX9814 analog microphone, speaker module on 8-bit PWM (GPIO1 mic, GPIO8 speaker) | `mic_speaker_e2e_test` |
+| MAX9814 analog microphone, speaker module on 8-bit PWM (GPIO1 mic, GPIO8 speaker) | `mic_speaker_e2e_test2` |
 
 Pin assignments differ between tests; check the project README and its
 `include/app_config.h` before wiring.
@@ -116,6 +118,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [lora_test](tested_parts/lora_test/) | Changed from PING/PONG (hardware-confirmed) to broadcast send and receive; broadcast version not yet hardware-tested |
 | [lora_encrypt_test](tested_parts/lora_encrypt_test/) | Direct AES-256-GCM serial chat, no relays; builds and host crypto tests pass; user confirmed working on hardware |
 | [mic_speaker_e2e_test](tested_parts/mic_speaker_e2e_test/) | Mic and speaker follow ESP32_Mic_Loopback_v4.ino; one live stream arrived intact (134/134 frames, CRC match) but the speaker was muted, so not yet heard. Earlier PDM build passed E1 (500/500, 26.60 dB) |
+| [mic_speaker_e2e_test2](tested_parts/mic_speaker_e2e_test2/) | Auto-unmute variant of `mic_speaker_e2e_test`; builds and host tests pass; not yet hardware-tested |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 
@@ -137,6 +140,7 @@ buffer. Compare results only when these match, or say what differs.
 | `opus_broadcast_test` | 11 | 1 Mbps | 200 ms (sweep 60–300 ms) |
 | `e2e_broadcast_test` | 11 | 6 Mbps run 1, 1 Mbps run 2; fixed at boot | 200 ms |
 | `mic_speaker_e2e_test` | 11 | 1 Mbps; fixed at boot | 300 ms (60–1000), with NACK retransmission |
+| `mic_speaker_e2e_test2` | 11 | 1 Mbps; fixed at boot | 300 ms (60–1000), with NACK retransmission |
 | `mictospeaker_test` | 6 | 6 Mbps | ADPCM stream, not comparable |
 
 Stage 5 (0.5% late at 60 ms) and stage 6 (2.87% late at 60 ms) differ in
