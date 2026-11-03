@@ -1,4 +1,4 @@
-"""Report which keys from include/e2e_keys.h appear in the given files.
+"""Report which keys from shared_keys/e2e_keys.h appear in the given files.
 
 Searches each file for every key as raw bytes (firmware images) and as hex
 text in either case (serial logs). Use it on built firmware.bin files for
@@ -10,7 +10,7 @@ import re
 import sys
 from pathlib import Path
 
-KEYS = Path(__file__).resolve().parent.parent / "include" / "e2e_keys.h"
+KEYS = Path(__file__).resolve().parent / "e2e_keys.h"
 
 
 def load_keys(path: Path) -> dict:
@@ -41,7 +41,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("files", nargs="+", type=Path)
     parser.add_argument("--keys", type=Path, default=KEYS,
-                        help="key header (default include/e2e_keys.h)")
+                        help="key header (default shared_keys/e2e_keys.h)")
     args = parser.parse_args()
     keys = load_keys(args.keys)
     if not keys:

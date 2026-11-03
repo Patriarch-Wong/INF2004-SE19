@@ -31,9 +31,9 @@
 #endif
 
 // Push-to-talk voice from one board's microphone to the other board's
-// speaker. The pair key is compiled in (tools/generate_keys.py), as in
-// stages 1-3, so there is no pairing step; stage 4's session handshake
-// derives a fresh session key from it at every boot.
+// speaker. The 1-2 pair key is compiled in from tested_parts/shared_keys,
+// as in stages 1-3, so there is no pairing step; stage 4's session
+// handshake derives a fresh session key from it at every boot.
 namespace
 {
 using network_config::device;
@@ -397,7 +397,8 @@ bool start()
                    "X25519)");
     if (!non_zero(e2e_keys::network, sizeof(e2e_keys::network)))
     {
-        return fail("All-zero network key: run python3 tools/generate_keys.py");
+        return fail("All-zero network key: run python3 "
+            "../shared_keys/generate_keys.py");
     }
     const char *error = radio::start(own_id);
     if (error)
@@ -413,22 +414,33 @@ bool start()
     Serial.println("Compiled-in keys: network and pair (no pairing step)");
     Serial.println("ESP-NOW link encryption: off (application layer only)");
     unsigned loaded = 0;
+    unsigned unused = 0;
     for (const e2e_keys::peer_key &entry : e2e_keys::peer_keys)
     {
+        if (entry.peer == own_id)
+        {
+            return fail("e2e_keys.h gives this board a key with itself");
+        }
         if (!valid_peer(entry.peer))
         {
-            return fail("e2e_keys.h names a peer not in network_config.h");
+            // shared_keys holds keys for every board; this project lists
+            // fewer boards, or that board's MAC is not set yet.
+            ++unused;
+            continue;
         }
         if (!non_zero(entry.key, sizeof(entry.key)))
         {
-            return fail("All-zero pair key: run python3 tools/generate_keys.py");
+            return fail("All-zero pair key: run python3 "
+                        "../shared_keys/generate_keys.py");
         }
         if (peers[entry.peer].link.begin(own_id, entry.peer, entry.key))
         {
             ++loaded;
         }
     }
-    Serial.printf("Pair keys compiled in: %u\n", loaded);
+    Serial.printf("Pair keys compiled in: %u in use, %u for boards not "
+                  "listed or without a MAC\n",
+        loaded, unused);
     list_keys();
     const uint32_t now = millis();
     for (uint8_t peer = 1; peer <= max_id; ++peer)

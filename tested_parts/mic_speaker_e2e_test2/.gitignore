@@ -109,8 +109,11 @@ secure_boot_signing_key*.pem
 flash_encryption_key*.bin
 
 
-# Keys: include/e2e_keys.h (network key and 1-2 pair key) is committed on
-# purpose at the user's request; see README. Never commit anything read
+# Keys: the network and pair keys are in ../shared_keys/e2e_keys.h, shared
+# by every project and committed on purpose at the user's request; see
+# shared_keys/README.md. A stray local copy here must not be committed:
+include/e2e_keys.h
+# Never commit anything read
 # back from a board: NVS or flash read-backs (*.bin above), NVS partition
 # CSVs, or core dumps.
 nvs*.csv

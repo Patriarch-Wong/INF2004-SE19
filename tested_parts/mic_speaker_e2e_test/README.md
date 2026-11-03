@@ -110,31 +110,37 @@ sh tests/run_handset_tests.sh    # voice link, audio DSP, check_streams
 ```
 
 Validated 2026-11-02, after the sketch rewrite: both environments build with no warnings (also
-with `-Wall -Wextra`), and all suites pass. `tools/find_keys.py` finds
-only the network key and the 1–2 pair key in each `firmware.bin`.
+with `-Wall -Wextra`), and all suites pass. `tools/find_keys.py` (now
+`../shared_keys/find_keys.py`) found only the network key and the 1–2 pair
+key in each `firmware.bin`. With the shared file (2026-11-03), each image
+also holds that board's unused pair keys for boards 3–5.
 
 ## Keys: compiled in, no pairing
 
 As in stages 1–3 (`e2e_security_test`), the keys come from a file, not
-from pairing:
+from pairing. Since 2026-11-03 that file is the shared
+[`../shared_keys/e2e_keys.h`](../shared_keys/README.md), used by every
+project that runs on these boards, so a board has the same keys whichever
+project it runs. `platformio.ini` adds `../shared_keys` to the include
+path. The network key and 1–2 pair key are unchanged from the file this
+project committed on 2026-11-02, so boards already flashed keep working.
 
 ```sh
-python3 tools/generate_keys.py           # writes include/e2e_keys.h
-python3 tools/generate_keys.py --force   # new keys; reflash both boards
+python3 ../shared_keys/generate_keys.py --check   # verify the shared file
+python3 ../shared_keys/find_keys.py .pio/build/*/firmware.bin
 ```
 
-`include/e2e_keys.h` holds the network key (signs every frame's hop) and
-the 1–2 pair key, in one block per board. Each `boardN` build compiles
-only its own block.
+The shared file has pair keys for five boards. Each `boardN` build compiles
+only its own block: the network key and its 4 pair keys. This project
+lists two boards, so it uses only the 1–2 key. It logs `Pair keys compiled
+in: 1 in use, 3 for boards not listed or without a MAC`.
 
-The file is **committed on purpose** (2026-11-02, at the user's request),
-so a fresh clone builds firmware that talks to the boards as they are now
-flashed. This is a school project. The cost is real: the pair key is the
-root of the voice encryption, so anyone with this repository can derive
-the session keys and read the voice, as they could with a flash dump. For
-a private deployment, run `generate_keys.py --force`, keep the new file
-out of git, and reflash both boards. NVS read-backs, NVS CSVs and core
-dumps stay gitignored.
+The file is **committed on purpose** (at the user's request). This is a
+school project. The cost is real: the pair key is the root of the voice
+encryption, so anyone with this repository can derive the session keys and
+read the voice, as they could with a flash dump. For a private deployment,
+see [shared_keys/README.md](../shared_keys/README.md#security). NVS
+read-backs, NVS CSVs and core dumps stay gitignored.
 
 At every boot the boards run stage 4's session handshake automatically.
 Both derive a fresh session key from the pair key, and voice is sealed
@@ -151,7 +157,7 @@ This firmware never reads them.
 
 **The user flashes the boards.** Board 1 (`E0:72:A1:D8:E2:10`) has the
 microphone; board 2 (`E0:72:A1:D8:F6:20`) has the speaker. Both must be
-flashed from the same `e2e_keys.h`.
+flashed from the same `../shared_keys/e2e_keys.h`.
 
 These boards do not enter download mode by themselves. Before each upload,
 hold BOOT, tap RESET, then release BOOT. Press RESET after the upload to

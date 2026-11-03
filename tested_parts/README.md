@@ -26,6 +26,8 @@ README has the full procedure and measurements.
 | [e2e_broadcast_test](e2e_broadcast_test/) | One-to-many Opus broadcast encrypted with a shared group key |
 | [mic_speaker_e2e_test](mic_speaker_e2e_test/) | MAX9814 mic on one board to PWM speaker on another (mic/speaker chain from ESP32_Mic_Loopback_v4.ino), encrypted Opus with retransmission |
 | [mic_speaker_e2e_test2](mic_speaker_e2e_test2/) | `mic_speaker_e2e_test` with auto-unmute: mute is debug only, any new incoming stream unmutes the speaker |
+| [handset_integration_test](handset_integration_test/) | First handset integration: D-pad + LCD, connect to a pre-paired handset (request shown and authenticated), hold OK to talk (encrypted Opus over ESP-NOW), disconnect or link loss drops both sides |
+| [shared_keys](shared_keys/) | One key file (network key + pair keys for boards 1–5) shared by `handset_integration_test` and both `mic_speaker_e2e_test` projects; generator and key finder |
 | [mictospeaker_test](mictospeaker_test/) | I2S microphone to ESP-NOW ADPCM to PDM speaker |
 | [lora_test](lora_test/) | Core1121 868 MHz LoRa broadcast send and receive |
 | [lora_encrypt_test](lora_encrypt_test/) | Direct encrypted two-way LoRa serial chat; no relays |
