@@ -110,18 +110,42 @@ void machine::begin(uint8_t own_id, const timing &settings)
     *this = machine();
     own = own_id;
     times = settings;
-    // Each board's own sequence, so two boards' delays differ.
-    random_state ^= static_cast<uint32_t>(own_id) * 0x85EBCA6Bu;
-    if (random_state == 0)
-    {
-        random_state = 1;
-    }
+    // Each board's own sequence, so two boards' delays differ. The
+    // firmware reseeds from the hardware RNG (seed()).
+    seed(own_id);
+}
+
+void machine::seed(uint32_t value)
+{
+    // murmur3's finalizer: xorshift is linear, so seeds that differ by a
+    // simple pattern (board IDs) would give related sequences and the two
+    // boards' delays would line up.
+    value ^= value >> 16;
+    value *= 0x85EBCA6Bu;
+    value ^= value >> 13;
+    value *= 0xC2B2AE35u;
+    value ^= value >> 16;
+    random_state = value != 0 ? value : 0x9E3779B9u;
 }
 
 void machine::enter(state next, uint32_t now)
 {
     status = next;
     entered_ms = now;
+    accept_repeat = false;
+}
+
+// Random extra delay, 0 to jitter_ms - 1 (0 if no jitter).
+uint32_t machine::jitter()
+{
+    if (times.jitter_ms == 0)
+    {
+        return 0;
+    }
+    random_state ^= random_state << 13;
+    random_state ^= random_state >> 17;
+    random_state ^= random_state << 5;
+    return random_state % times.jitter_ms;
 }
 
 void machine::send(uint8_t to, uint8_t kind, uint32_t which, uint32_t now)
@@ -142,15 +166,7 @@ void machine::send(uint8_t to, uint8_t kind, uint32_t which, uint32_t now)
     // (elapsed() treats that as no time passed).
     if (to == peer_id && (kind == op_request || kind == op_ping))
     {
-        uint32_t extra = 0;
-        if (times.jitter_ms > 0)
-        {
-            random_state ^= random_state << 13;
-            random_state ^= random_state >> 17;
-            random_state ^= random_state << 5;
-            extra = random_state % times.jitter_ms;
-        }
-        last_sent_ms = now + extra;
+        last_sent_ms = now + jitter();
     }
 }
 
@@ -192,6 +208,8 @@ bool machine::answer(uint32_t now)
     enter(state::connected, now);
     last_heard_ms = last_sent_ms = now;
     send(peer_id, op_accept, id, now);
+    accept_repeat = times.accept_repeat_ms > 0;
+    accept_repeat_from = now + jitter();
     return true;
 }
 
@@ -287,6 +305,10 @@ void machine::receive(uint8_t source, const message &content, uint32_t now)
             {
                 send(peer_id, op_accept, id, now);  // Our accept was lost.
             }
+            else
+            {
+                accept_repeat = false;  // The asker is connected.
+            }
             break;
         case state::idle:
             break;
@@ -370,6 +392,7 @@ void machine::heard_from(uint8_t source, uint32_t now)
     if (connected_with(source))
     {
         last_heard_ms = now;
+        accept_repeat = false;  // Only a connected asker sends these.
     }
 }
 
@@ -397,6 +420,12 @@ void machine::tick(uint32_t now)
         if (elapsed(now, last_heard_ms, times.link_lost_ms))
         {
             finish(end_reason::link_lost, op_hang_up, now);
+        }
+        else if (accept_repeat &&
+            elapsed(now, accept_repeat_from, times.accept_repeat_ms))
+        {
+            accept_repeat = false;
+            send(peer_id, op_accept, id, now);
         }
         else if (elapsed(now, last_sent_ms, times.ping_ms))
         {

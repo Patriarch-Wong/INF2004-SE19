@@ -14,8 +14,11 @@ texts**:
 2. **Send a text.** While connected over LoRa, **UP** sends
    **"Hello from Board 1"** and **DOWN** sends **"Bye from Board 1"**. The
    other board shows it in the banner with a beep, and under
-   `Received` on its LoRa screen, with the signal strength. One text per
-   second. Nothing else is sent over LoRa: no voice, no other text.
+   `Received` on its LoRa screen, with the signal strength. The sender
+   shows **Sending**, then **Delivered** once the other board's receipt
+   comes back, or **Not delivered** (with a low beep) after 3 tries. One
+   text per second. Nothing else is sent over LoRa: no voice, no other
+   text.
 3. **Disconnect.** CANCEL on either board ends the LoRa connection on both.
    If the other board goes quiet for 20 s (off, or out of range), both
    sides drop it.
@@ -30,6 +33,12 @@ connection kept up by heartbeats alone.** All five environments build and
 the host tests pass. ESP-NOW + LoRa together (X1–X9) also pass, apart
 from occasional late voice frames (C9, also without LoRa).
 Evidence: `evidence/loraA_*`, `evidence/edge1_*`, `evidence/edge2_*`.
+
+**Polish since then (2026-11-04):** delivery receipts for texts, the
+repeated accept, staggered first hellos and per-boot random delays (see
+[Polish](#polish-after-the-hardware-run)). Run `edge4` on hardware:
+**44/44 pass, E1–E11** (`evidence/edge4_*`). It found the hello gap
+below, which is built but not yet flashed.
 
 ## Why the earlier LoRa build froze, and what's different
 
@@ -73,6 +82,41 @@ is a quicker check if `-705` comes back.
   hello is answered 0.3–1.3 s later. Sessions now form 1–2 s after the
   later radio starts.
 
+## Polish after the hardware run
+
+Passed on hardware in `edge4` (2026-11-04), except the hello gap (last
+item), which waits for a flash:
+
+- **Texts are confirmed.** A text sent while the other board was sending
+  (a heartbeat, its own text) was lost on air and the sender still showed
+  `Sent`. Each text is now numbered; the receiver answers every copy with
+  an encrypted receipt and shows each number once; the sender tries up to
+  3 times, 1.5–2.5 s apart, and shows `Delivered` or `Not delivered`
+  (`include/lora_text.h`, host tests `tests/lora_text_test.cpp`). A board
+  not connected sends no receipt, so the sender correctly says
+  `Not delivered`.
+- **A lost accept costs ~1 s, not 2–3 s.** The accept crossed the asker's
+  resend on air now and then (seen in the edge runs). The accepting board
+  now sends its accept once more 0.4–1.4 s later, unless it has already
+  heard the asker (`call::timing.accept_repeat_ms`, 0 for ESP-NOW).
+- **The random delays were the same every boot.** The connection
+  machine's delays came from a generator seeded with the board ID only,
+  and boards 1 and 2's sequences were related (xorshift is linear), so
+  their heartbeats drifted together. It is now seeded from the hardware
+  RNG, and the ID seed is hashed for the host tests.
+- **First hellos are staggered.** When the radio comes up, each first
+  session hello waits a random 0–1 s, so two boards powered on together
+  don't send theirs at the same moment.
+- `lora mute rx` drops only received frames, to test lost receipts; a TX
+  dropped by a failed `standby` now counts as `failed` in `lora`.
+- **A session hello's answer was lost under the next hello** (found in
+  `edge4`, E9b took 16.8 s). After a reboot, board 2 sent hellos to board 1
+  and to the absent board 3 0.1–0.3 s apart. Board 1 answers at once, so
+  its answer arrived while board 2 was sending the second hello, and was
+  never heard; the session formed only at the 5th try. Now no hello
+  follows another within `lora_hello_gap_ms` (600 ms). Not yet on
+  hardware.
+
 ## Screens and buttons
 
 ```
@@ -96,7 +140,7 @@ A request over either radio appears on any screen: OK accepts, CANCEL declines.
 | LoRa list | `Board N` per handset, green dot = it answered a LoRa handshake since boot; second hint line: the radio error if it failed | OK connects over LoRa; CANCEL back |
 | Connecting | Asking Board 2, **over LoRa** or **over ESP-NOW**, time waiting | CANCEL stops asking |
 | Request | Who wants to connect, **over which radio**, "verified by pair key" | OK accepts, CANCEL declines |
-| LoRa connected | Peer, connection time, `UP Hello` / `DOWN Bye`, last text received and how long ago, RSSI and SNR | UP sends Hello, DOWN sends Bye, CANCEL disconnects |
+| LoRa connected | Peer, connection time, `UP Hello` / `DOWN Bye` (after a press: `Sending`, then `Delivered` in green or `Not delivered` in red), last text received and how long ago, RSSI and SNR | UP sends Hello, DOWN sends Bye, CANCEL disconnects |
 | Disconnected | Peer, reason, which radio | Any button, or 3 s, back |
 | Status | As before, plus `LoRa ok 915.0 MHz SF7` (or the error), LoRa keys per board, LoRa frames sent and heard | CANCEL back |
 
@@ -121,6 +165,8 @@ step deeper (Menu → ESP-NOW → Board 2) than in `handset_integration_test`.
   can't hear while it sends. Requests every 2 s, give up after 30 s.
   Heartbeats every 5 s, link lost after 20 s of silence. If the connected
   board reboots (a new LoRa session), the connection ends at once.
+- **Texts:** numbered, answered with a receipt, tried up to 3 times
+  (above). Payload: kind (1 text, 2 receipt), number, then the text.
 - **No presence pings over LoRa** (airtime). A green LoRa dot only means
   that board answered since boot; asking a board that has since gone off
   ends with `No answer` after 30 s.
@@ -183,9 +229,12 @@ Everything from `handset_integration_test` (`help` lists them), plus:
 | `press NAME [MS]`, `hold NAME`, `release [NAME]`, `ui` | The D-pad over serial, as before (same handler as the buttons, every screen); `ui` also shows the LoRa texts |
 | `lora log on\|off` | One line per LoRa frame sent or received (`LORA TX -> 2 ...`, `LORA RX <- 2 to 1 ... RSSI SNR`); on by default |
 | `lora mute on\|off` | Drop every LoRa frame sent and received, like out of range (radio stays on), for link-loss tests |
+| `lora mute rx` | Drop only received LoRa frames (lost receipts); `lora mute off` ends it |
 
 Log lines start with `LORA` (radio, sessions, `LORA LINK`, `LORA TEXT`,
-`LORA REJECT`). Every 10 s the board prints a `LORA |` status line.
+`LORA REJECT`). Texts log `LORA TEXT sent ... #N try K of 3`, then
+`LORA TEXT delivered ... after K tries` or `LORA TEXT not delivered`; the
+receiver logs `LORA TEXT #N from 1 again: receipt resent` for a repeat. Every 10 s the board prints a `LORA |` status line.
 
 ## Hardware tests (boards 1 and 2)
 
@@ -194,7 +243,8 @@ Log lines start with `LORA` (radio, sessions, `LORA LINK`, `LORA TEXT`,
 | L1 Boot | Reset both boards | Menu draws; log `LORA ok ... BUSY low N ms`; LoRa dot green. If the radio fails: dot red, menu and ESP-NOW still work, error on the LoRa list and Status page, retried every 5 s |
 | L2 LoRa sessions | Wait 10 s after both boot, open LoRa | Both lists show the other board green; `lora` shows a session with it |
 | L3 Connect | Board 1: LoRa → Board 2, OK. Board 2: OK | Board 2 shows "wants to connect over LoRa"; both reach the LoRa screen |
-| L4 Hello and Bye | Board 1 UP, then DOWN; then board 2 UP, then DOWN | Each shows "Hello from Board N" then "Bye from Board N" from the other, with banner, beep and RSSI |
+| L4 Hello and Bye | Board 1 UP, then DOWN; then board 2 UP, then DOWN | Each shows "Hello from Board N" then "Bye from Board N" from the other, with banner, beep and RSSI; the sender shows `Delivered` |
+| L11 Not delivered | While connected, power off board 2, then UP on board 1 straight away | Board 1 shows `Sending`, then `Not delivered` with a low beep about 4.5–6.5 s later |
 | L5 Decline and cancel | Ask and decline; ask and CANCEL while asking; ask and leave unanswered | `Declined` / `You declined`; `Stopped asking` / `Missed request`; `No answer` after 30 s |
 | L6 Disconnect | While connected, CANCEL on either board | Both show `Disconnected` within a few seconds |
 | L7 Link lost | While connected, power off board 2 | Board 1 shows `Connection lost` within about 25 s |
@@ -211,7 +261,7 @@ cases (the request guard) work. Opening the ports resets the boards.
 ```sh
 ~/.platformio/penv/bin/python tools/lora_edge_test.py edge1 \
     /dev/cu.usbmodem5B5F0216001 /dev/cu.usbmodem5B5F0215971 [TEST ...]
-# TEST: session decline cancel guard texts glare busy noanswer loss reboot reconnect
+# TEST: session decline cancel guard texts glare busy noanswer loss reboot reconnect delivery
 ```
 
 | Case | Result (2026-11-04) |
@@ -224,8 +274,9 @@ cases (the request guard) work. Opening the ports resets the boards.
 | E6 One connection at a time | Pass: ESP-NOW connect refused during LoRa, LoRa connect refused during ESP-NOW (both boards). `Busy` from a third board needs board 3 |
 | E7 Both ask at once | Pass: first requests collided on air; 2.7 s later board 2 (higher ID) gave way and showed board 1's request |
 | E8 OK within 500 ms of a request | Pass: ignored; a later OK accepts |
-| E9 Link loss / reboot | Pass: `lora mute on` → both `link lost` at 20.0 s; reboot → board 1 ends the connection 6.6 s later on the new LoRa session, and a session is made again |
+| E9 Link loss / reboot | Pass: `lora mute on` → both `link lost` at 20.0 s; reboot → board 1 ends the connection 6.6 s later on the new LoRa session, and a session is made again. `edge4`: 16.8 s (answers lost under board 2's next hello; fixed by the hello gap, to re-run) |
 | E10 Texts outside a connection | Pass: `lora hello` and UP/DOWN on the LoRa list send nothing |
+| E11 Delivery receipts (`delivery`) | Pass (`edge4`, 11/11). Delivered on the first try; board 2 muted: 3 tries then not delivered; board 1 `mute rx`: board 2 shows the text once and answers all 3 tries; delivered again after unmuting; the connection holds |
 
 ### ESP-NOW and LoRa together (same script)
 
@@ -245,5 +296,7 @@ anywhere espreboot`. Runs `mix1`–`mix3` (2026-11-04).
 | X9 Reboot during an ESP-NOW connection | Pass: ESP-NOW ends, both sessions come back, then LoRa and ESP-NOW connect |
 
 Seen but not failures: an accept can be lost when it crosses the asker's
-resend (the next resend recovers it, ~2 s later); board 1 logs one LoRa
-receive error per boot during the first hello burst.
+resend (the next resend recovered it, ~2 s later; now the repeated accept
+should, after ~1 s); board 1 logs one LoRa receive error per boot during
+the first hello burst (the staggered first hellos may remove it; check
+`errors` in the `LORA |` line).

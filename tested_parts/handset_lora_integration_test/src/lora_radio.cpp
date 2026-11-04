@@ -233,6 +233,7 @@ void transmit(const tx_item &item)
 {
     if (!check(radio.standby(), "standby before TX"))
     {
+        n_send_failed.fetch_add(1);  // The radio restarts; the frame is gone.
         return;
     }
     // The blocking TX-done interrupt must not look like a received packet.

@@ -692,6 +692,54 @@ void test_lora_jitter()
     check(exact_ok, "jitter 0 (ESP-NOW) keeps heartbeats exact");
 }
 
+// LoRa: the accept crosses the asker's resend on air and is lost. The
+// asked side's one repeat connects the asker before its next resend.
+void test_lora_accept_repeat()
+{
+    timing lora;
+    lora.request_resend_ms = 2000;
+    lora.ring_timeout_ms = 30000;
+    lora.ring_lost_ms = 7000;
+    lora.ping_ms = 5000;
+    lora.link_lost_ms = 20000;
+    lora.jitter_ms = 1000;
+    lora.accept_repeat_ms = 400;
+    network net(lora);
+    machine &a = net.boards[1];
+    machine &b = net.boards[2];
+    check(a.dial(2, 0xA00, net.now), "LoRa connect, accept repeat on");
+    net.run(100);
+    net.drop_op = op_accept;
+    net.drop_count = 1;
+    check(b.answer(net.now), "accept (lost)");
+    net.run(10);
+    check(a.current() == state::calling, "first accept lost");
+    net.run(1400);
+    check(a.connected_with(2), "the repeated accept connects within 1.4 s");
+    check(net.delivered[2][op_request] == 1,
+        "before the asker's next resend");
+    net.run(10000);
+    check(net.delivered[1][op_accept] == 1, "the accept is repeated once only");
+
+    // The repeat is skipped once the asker is heard.
+    network quiet(lora);
+    check(quiet.boards[1].dial(2, 0xA01, quiet.now), "connect again");
+    quiet.run(100);
+    check(quiet.boards[2].answer(quiet.now), "accept (delivered)");
+    quiet.boards[2].heard_from(1, quiet.now);  // E.g. a text from the asker.
+    quiet.run(10000);
+    check(quiet.delivered[1][op_accept] == 1,
+        "no repeat once the asker was heard");
+
+    // ESP-NOW (0): never repeated.
+    network plain;
+    check(plain.boards[1].dial(2, 0xA02, plain.now), "ESP-NOW connect");
+    plain.run(10);
+    check(plain.boards[2].answer(plain.now), "ESP-NOW accept");
+    plain.run(3000);
+    check(plain.delivered[1][op_accept] == 1, "ESP-NOW sends one accept");
+}
+
 int main()
 {
     test_format();
@@ -708,5 +756,6 @@ int main()
     test_unavailable();
     test_lora_timing();
     test_lora_jitter();
+    test_lora_accept_repeat();
     return test_check::finish("connection");
 }

@@ -174,6 +174,7 @@ uint32_t ui_drawn_elapsed = UINT32_MAX;
 uint32_t ui_drawn_lora_in = UINT32_MAX;
 uint32_t ui_drawn_lora_out = UINT32_MAX;
 bool ui_drawn_lora_notice = false;
+uint32_t ui_shown_delivery = 0;  // lora_delivery_count already shown.
 
 // The connection the shared screens (connecting, request, disconnected)
 // are about: the one in progress, else the one that ended last.
@@ -841,9 +842,10 @@ void draw_lora_box(uint32_t now)
     ui_drawn_lora_notice = lora_notice_showing(now);
     if (ui_drawn_lora_notice)
     {
-        draw_box_lines(ui_notice_title[0] == 'S' ? listen_color :
-                highlight_color, ui_notice_title, 2, ui_notice_text,
-            ST77XX_BLACK);
+        // Sending: orange; Delivered: green; Not sent / Not delivered: red.
+        draw_box_lines(ui_notice_title[0] == 'D' ? listen_color :
+                ui_notice_title[0] == 'N' ? talk_color : highlight_color,
+            ui_notice_title, 2, ui_notice_text, ST77XX_BLACK);
         return;
     }
     lcd.fillRoundRect(8, box_top, lcd.width() - 16, box_height, 6,
@@ -895,9 +897,27 @@ void draw_lora_connected(uint32_t now)
     draw_text(line, 8, 44, 2, highlight_color);
     draw_elapsed("", 160, 48, 1, now);
     lcd.drawFastHLine(8, 70, lcd.width() - 16, outline_color);
+    ui_shown_delivery = lora_delivery_count;
     draw_lora_box(now);
     draw_lora_last(now);
     draw_hints("UP: send Hello   DOWN: send Bye", "CANCEL: disconnect");
+}
+
+// A receipt came back, or every try went unanswered.
+void show_lora_delivery(uint32_t now)
+{
+    ui_shown_delivery = lora_delivery_count;
+    const char *word = lora_text_word == lora_word::hello ? "Hello" : "Bye";
+    if (lora_delivery_state == lora_delivery::delivered)
+    {
+        notice("Delivered", word, now);
+    }
+    else if (lora_delivery_state == lora_delivery::failed)
+    {
+        notice("Not delivered", word, now);
+        refused_beep();
+    }
+    draw_lora_box(now);
 }
 
 void say_lora(lora_word word, uint32_t now)
@@ -905,7 +925,8 @@ void say_lora(lora_word word, uint32_t now)
     switch (send_lora_text(word, now))
     {
     case text_result::sent:
-        notice("Sent", word == lora_word::hello ? "Hello" : "Bye", now);
+        // Then Delivered or Not delivered (show_lora_delivery).
+        notice("Sending", word == lora_word::hello ? "Hello" : "Bye", now);
         break;
     case text_result::offline:
         notice("Not sent", "LoRa radio", now);
@@ -1449,7 +1470,8 @@ void print_ui(uint32_t now)
     }
     if (shown == screen::lora_connected)
     {
-        Serial.printf(" | sent \"%s\" | received \"%s\"", lora_text_out,
+        Serial.printf(" | sent \"%s\" (%s) | received \"%s\"",
+            lora_text_out, lora_delivery_name(lora_delivery_state),
             lora_text_in);
     }
     if (shown == screen::connected)
@@ -1611,7 +1633,11 @@ void refresh(uint32_t now)
         }
         break;
     case screen::lora_connected:
-        if (lora_notice_showing(now) != ui_drawn_lora_notice)
+        if (lora_delivery_count != ui_shown_delivery)
+        {
+            show_lora_delivery(now);
+        }
+        else if (lora_notice_showing(now) != ui_drawn_lora_notice)
         {
             draw_lora_box(now);
         }

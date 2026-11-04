@@ -235,6 +235,9 @@ constexpr uint32_t lora_session_resync_ms = 15000;
 // once the peer has finished sending.
 constexpr uint32_t lora_jitter_ms = 1000;
 constexpr uint32_t lora_answer_min_ms = 300;
+// After a session hello, no other hello for this long, so its answer
+// (back in about 0.3 s) isn't sent while this board transmits.
+constexpr uint32_t lora_hello_gap_ms = 600;
 
 // LoRa connections (call.h timings). Each frame is about 80-130 ms on air
 // and the radio can't hear while it sends, so everything is slower than
@@ -245,4 +248,12 @@ constexpr uint32_t lora_ring_timeout_ms = 30000;
 constexpr uint32_t lora_ring_lost_ms = 7000;
 constexpr uint32_t lora_ping_ms = 5000;
 constexpr uint32_t lora_link_lost_ms = 20000;
+// The asked board sends its accept again 0.4-1.4 s after accepting, so an
+// accept lost under the asker's resend costs ~1 s, not 2-3 s.
+constexpr uint32_t lora_accept_repeat_ms = 400;
+// LoRa texts wait for a delivery receipt (lora_text.h): up to 3 tries,
+// 1.5 s plus up to lora_jitter_ms apart; "Not delivered" 1.5 s after the
+// last. A receipt normally takes about 0.25 s (two frames on air).
+constexpr uint8_t lora_text_tries = 3;
+constexpr uint32_t lora_text_retry_ms = 1500;
 }

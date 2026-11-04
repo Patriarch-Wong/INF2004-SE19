@@ -59,6 +59,35 @@ char lora_text_out[app_config::text_max_chars + 1] = {};
 uint32_t lora_text_out_count = 0;
 bool lora_text_sent_once = false;
 uint32_t lora_text_sent_ms = 0;
+// Delivery receipts (lora_text.h). The UI shows the outcome when
+// lora_delivery_count changes.
+lora_text::sender lora_text_tx;
+lora_text::receiver lora_text_rx;
+lora_word lora_text_word = lora_word::hello;
+enum class lora_delivery : uint8_t
+{
+    none,
+    sending,
+    delivered,
+    failed,
+};
+lora_delivery lora_delivery_state = lora_delivery::none;
+uint32_t lora_delivery_count = 0;
+uint32_t lora_text_delivered = 0;
+uint32_t lora_text_failed = 0;
+uint32_t lora_text_retries = 0;
+
+const char *lora_delivery_name(lora_delivery value)
+{
+    switch (value)
+    {
+    case lora_delivery::none: return "none";
+    case lora_delivery::sending: return "sending";
+    case lora_delivery::delivered: return "delivered";
+    case lora_delivery::failed: return "not delivered";
+    }
+    return "?";
+}
 
 bool lora_in_use()
 {
@@ -80,7 +109,9 @@ bool lora_can_send(uint8_t peer)
 bool lora_log_frames = true;
 // Serial `lora mute on|off`: drops every LoRa frame sent and received, as
 // out of range would, for link-loss tests (the radio itself stays on).
+// `lora mute rx` drops only received frames (lost receipts).
 bool lora_muted = false;
+bool lora_muted_rx_only = false;
 uint32_t lora_muted_tx = 0;
 uint32_t lora_muted_rx = 0;
 
@@ -89,6 +120,29 @@ uint32_t lora_muted_rx = 0;
 // and never hear each other (2026-11-04: both sent hellos every 3 s, and
 // the board that answered "at once" landed on the other's second frame
 // every time). Every LoRa retry gets a random extra delay.
+// When this board last sent a session hello. The next hello, to any
+// board, waits lora_hello_gap_ms: the answer to the last one comes back
+// within about 0.3 s, and a hello to another board sent in that window
+// (half duplex) means it is never heard. Seen 2026-11-04 (edge4): after a
+// reboot, board 2's hellos to 1 and to the absent 3 went 0.1-0.3 s apart,
+// board 1's answer landed on the second every time, and the session took
+// 15 s instead of 1-2 s.
+bool lora_hello_sent = false;
+uint32_t lora_hello_sent_ms = 0;
+
+bool lora_hello_gap_open(uint32_t now)
+{
+    return !lora_hello_sent ||
+        static_cast<int32_t>(now - lora_hello_sent_ms) >=
+            static_cast<int32_t>(app_config::lora_hello_gap_ms);
+}
+
+void lora_note_hello(uint32_t now)
+{
+    lora_hello_sent = true;
+    lora_hello_sent_ms = now;
+}
+
 uint32_t lora_jittered(uint32_t base_ms)
 {
     return base_ms + esp_random() % app_config::lora_jitter_ms;
@@ -151,7 +205,7 @@ bool lora_send_payload(uint8_t peer, const uint8_t *payload, size_t size,
     if (lora_muted)
     {
         ++lora_muted_tx;
-        return false;
+        return true;  // Gone, as out of range: retries and timeouts notice.
     }
     if (lora_log_frames)
     {
@@ -163,24 +217,37 @@ bool lora_send_payload(uint8_t peer, const uint8_t *payload, size_t size,
 
 // Sessions
 
-void lora_start_session(uint8_t peer, uint32_t now)
+// Starts a handshake with `peer`. The first hello goes out after
+// `first_wait_ms` (service_lora_sessions sends it), 0 for at once.
+void lora_start_session(uint8_t peer, uint32_t now, uint32_t first_wait_ms = 0)
 {
     uint8_t nonce[session::nonce_size];
     esp_fill_random(nonce, sizeof(nonce));
     control_frame::message hello = {};
-    if (lora_peers[peer].link.initiate(nonce, &hello))
+    lora_peer &state = lora_peers[peer];
+    if (!state.link.initiate(nonce, &hello))
     {
-        lora_send_control(peer, hello);
-        lora_peers[peer].last_hello_ms = now;
-        lora_peers[peer].hello_wait_ms =
-            lora_jittered(app_config::lora_session_retry_ms);
-        lora_peers[peer].hellos = 1;
-        Serial.printf("LORA SESSION hello -> %u\n", peer);
+        return;
     }
+    if (first_wait_ms > 0)
+    {
+        state.last_hello_ms = now;
+        state.hello_wait_ms = first_wait_ms;
+        state.hellos = 0;
+        return;
+    }
+    lora_send_control(peer, hello);
+    lora_note_hello(now);
+    state.last_hello_ms = now;
+    state.hello_wait_ms = lora_jittered(app_config::lora_session_retry_ms);
+    state.hellos = 1;
+    Serial.printf("LORA SESSION hello -> %u\n", peer);
 }
 
 // The radio has (re)started: make a LoRa session with every paired board
-// that has none yet.
+// that has none yet. Each first hello waits a random 0-1 s: two boards
+// powered on together would otherwise send theirs at the same moment and
+// neither would hear the other's (half duplex).
 void lora_start_sessions(uint32_t now)
 {
     for (uint8_t peer = 1; peer <= max_id; ++peer)
@@ -189,13 +256,20 @@ void lora_start_sessions(uint32_t now)
         if (state.link.paired() && !state.link.established() &&
             !state.link.initiating())
         {
-            lora_start_session(peer, now);
+            // 1 + random: never 0, which means at once.
+            lora_start_session(peer, now, lora_jittered(1));
         }
     }
 }
 
+// At most one hello per lora_hello_gap_ms; a peer that is due waits for
+// the next gap.
 void service_lora_sessions(uint32_t now)
 {
+    if (!lora_hello_gap_open(now))
+    {
+        return;
+    }
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
         lora_peer &state = lora_peers[peer];
@@ -205,8 +279,12 @@ void service_lora_sessions(uint32_t now)
             state.link.hello(&hello))
         {
             lora_send_control(peer, hello);
+            lora_note_hello(now);
             state.last_hello_ms = now;
-            ++state.hellos;
+            if (++state.hellos == 1)
+            {
+                Serial.printf("LORA SESSION hello -> %u\n", peer);
+            }
             state.hello_wait_ms = lora_jittered(
                 state.hellos >= app_config::lora_session_fast_hellos ?
                     app_config::lora_session_slow_retry_ms :
@@ -218,6 +296,7 @@ void service_lora_sessions(uint32_t now)
                     peer, static_cast<unsigned long>(
                         app_config::lora_session_slow_retry_ms / 1000));
             }
+            return;  // The next hello after the gap.
         }
     }
 }
@@ -291,8 +370,12 @@ void handle_lora_session(const lora_radio::received_frame &frame,
 
 // Texts
 
+void service_lora_text(uint32_t now);
+
 // Sends "Hello from Board N" or "Bye from Board N" to the board this one
-// is connected with over LoRa. Nothing else is ever sent as text.
+// is connected with over LoRa. Nothing else is ever sent as text. The
+// first try goes now; service_lora_text resends until a receipt comes
+// back (lora_text.h).
 text_result send_lora_text(lora_word word, uint32_t now)
 {
     if (lora_calls.current() != call::state::connected)
@@ -307,58 +390,153 @@ text_result send_lora_text(lora_word word, uint32_t now)
         return text_result::too_soon;
     }
     const uint8_t peer = lora_calls.peer();
-    char text[app_config::text_max_chars + 1];
-    snprintf(text, sizeof(text), "%s from %s",
-        word == lora_word::hello ? "Hello" : "Bye", device_name(own_id));
-    if (!lora_ready() || !lora_can_send(peer) ||
-        !lora_send_payload(peer, reinterpret_cast<const uint8_t *>(text),
-            strlen(text), secure_message::type_text))
+    if (!lora_ready() || !lora_can_send(peer))
     {
         Serial.printf("LORA TEXT send failed to %u (radio %s)\n", peer,
             lora_radio::state_name(lora_radio::current()));
         return text_result::offline;
     }
+    if (lora_text_tx.pending())
+    {
+        Serial.printf("LORA TEXT #%u replaced before its receipt\n",
+            lora_text_tx.number());
+    }
+    lora_text_word = word;
+    snprintf(lora_text_out, sizeof(lora_text_out), "%s from %s",
+        word == lora_word::hello ? "Hello" : "Bye", device_name(own_id));
+    lora_text_tx.start(now);
     lora_text_sent_once = true;
     lora_text_sent_ms = now;
-    snprintf(lora_text_out, sizeof(lora_text_out), "%s", text);
+    lora_delivery_state = lora_delivery::sending;
     ++lora_text_out_count;
-    Serial.printf("LORA TEXT sent to %u (%s): \"%s\"\n", peer,
-        device_name(peer), text);
+    service_lora_text(now);  // The first try, now.
     return text_result::sent;
 }
 
-// Text only from the board connected over LoRa. Printable ASCII only (the
+// Sends the pending text when a try is due; reports "not delivered" after
+// the last try.
+void service_lora_text(uint32_t now)
+{
+    if (!lora_text_tx.pending())
+    {
+        return;
+    }
+    const uint8_t peer = lora_calls.peer();
+    switch (lora_text_tx.poll(now))
+    {
+    case lora_text::event::send:
+    {
+        uint8_t payload[secure_message::max_payload_size];
+        size_t size = 0;
+        const unsigned attempt = lora_text_tx.tries_sent();
+        if (attempt > 1)
+        {
+            ++lora_text_retries;
+        }
+        if (!lora_text::build_text(lora_text_tx.number(), lora_text_out,
+                payload, sizeof(payload), &size) ||
+            !lora_can_send(peer) ||
+            !lora_send_payload(peer, payload, size, secure_message::type_text))
+        {
+            Serial.printf("LORA TEXT #%u try %u not sent (radio %s)\n",
+                lora_text_tx.number(), attempt,
+                lora_radio::state_name(lora_radio::current()));
+            break;  // The next try, or "not delivered", follows.
+        }
+        Serial.printf("LORA TEXT sent to %u (%s): \"%s\" | #%u try %u of "
+                      "%u\n",
+            peer, device_name(peer), lora_text_out, lora_text_tx.number(),
+            attempt, app_config::lora_text_tries);
+        break;
+    }
+    case lora_text::event::failed:
+        ++lora_text_failed;
+        lora_delivery_state = lora_delivery::failed;
+        ++lora_delivery_count;
+        Serial.printf("LORA TEXT not delivered to %u: \"%s\" | #%u, no "
+                      "receipt after %u tries\n",
+            peer, lora_text_out, lora_text_tx.number(),
+            app_config::lora_text_tries);
+        break;
+    case lora_text::event::delivered:
+    case lora_text::event::none:
+        break;
+    }
+}
+
+void send_lora_receipt(uint8_t peer, uint8_t number)
+{
+    uint8_t payload[lora_text::header_size];
+    size_t size = 0;
+    if (lora_text::build_receipt(number, payload, sizeof(payload), &size))
+    {
+        lora_send_payload(peer, payload, size, secure_message::type_text);
+    }
+}
+
+// Text only from the board connected over LoRa: every copy is answered
+// with a receipt, and each number is shown once. Printable ASCII only (the
 // LCD font), cut to text_max_chars. Also shown in the banner, like an
 // ESP-NOW hello.
 void on_lora_text(uint8_t source, const uint8_t *payload, size_t size,
     uint32_t now)
 {
+    lora_text::message content = {};
+    if (!lora_text::parse(payload, size, &content))
+    {
+        Serial.printf("LORA TEXT dropped from %u: not a LoRa text or "
+                      "receipt (%u bytes)\n",
+            source, static_cast<unsigned>(size));
+        return;
+    }
     if (!lora_calls.connected_with(source))
     {
+        // No receipt: the sender shows "not delivered", which is true.
         Serial.printf("LORA TEXT dropped from %u: not connected over LoRa\n",
             source);
         return;
     }
-    size_t n = 0;
-    for (size_t i = 0; i < size && n < app_config::text_max_chars; ++i)
+    if (content.kind == lora_text::kind_receipt)
     {
-        const uint8_t c = payload[i];
+        const unsigned tries = lora_text_tx.tries_sent();
+        if (lora_text_tx.receipt(content.number) ==
+            lora_text::event::delivered)
+        {
+            ++lora_text_delivered;
+            lora_delivery_state = lora_delivery::delivered;
+            ++lora_delivery_count;
+            Serial.printf("LORA TEXT delivered to %u: \"%s\" | #%u after %u "
+                          "tr%s\n",
+                source, lora_text_out, content.number, tries,
+                tries == 1 ? "y" : "ies");
+        }
+        return;
+    }
+    send_lora_receipt(source, content.number);
+    if (!lora_text_rx.is_new(content.number))
+    {
+        Serial.printf("LORA TEXT #%u from %u again: receipt resent\n",
+            content.number, source);
+        return;
+    }
+    size_t n = 0;
+    for (size_t i = 0; i < content.text_size && n < app_config::text_max_chars;
+         ++i)
+    {
+        const uint8_t c = content.text[i];
         lora_text_in[n++] = c >= 0x20 && c <= 0x7E ? static_cast<char>(c) :
             '?';
     }
     lora_text_in[n] = '\0';
-    if (n == 0)
-    {
-        return;
-    }
     lora_text_in_ms = now;
     ++lora_text_in_count;
     snprintf(text_in, sizeof(text_in), "%s", lora_text_in);
     text_from = source;
     ++text_in_count;  // The banner.
-    Serial.printf("LORA TEXT from %u (%s): \"%s\" | RSSI %.0f SNR %.1f\n",
-        source, device_name(source), lora_text_in, lora_peers[source].rssi,
-        lora_peers[source].snr);
+    Serial.printf("LORA TEXT from %u (%s): \"%s\" | #%u | RSSI %.0f SNR "
+                  "%.1f\n",
+        source, device_name(source), lora_text_in, content.number,
+        lora_peers[source].rssi, lora_peers[source].snr);
     if (app_config::text_tone_ms > 0 && tx == tx_phase::idle &&
         rx_play_at_us.load() == 0)
     {
@@ -538,6 +716,7 @@ void report_lora_call(uint32_t now)
     if (lora_calls.end_count() != lora_shown_ends)
     {
         lora_shown_ends = lora_calls.end_count();
+        lora_text_tx.cancel();  // A receipt can't come back now.
         Serial.printf("LORA LINK disconnected from %u (%s) | %s\n",
             lora_calls.peer(), device_name(lora_calls.peer()),
             call::end_reason_name(lora_calls.last_end()));
@@ -565,6 +744,9 @@ void report_lora_call(uint32_t now)
     case call::state::connected:
         lora_text_in[0] = '\0';  // Texts belong to one connection.
         lora_text_out[0] = '\0';
+        lora_text_tx.cancel();
+        lora_text_rx.reset();
+        lora_delivery_state = lora_delivery::none;
         Serial.printf("LORA LINK connected to %u (%s) | id %08lX | session "
                       "%08lX\n",
             lora_calls.peer(), device_name(lora_calls.peer()),
@@ -612,6 +794,7 @@ void service_lora_calls(uint32_t now)
     lora_calls.tick(now);
     send_lora_call_messages();
     report_lora_call(now);
+    service_lora_text(now);
     // Beep while a LoRa request waits for this user.
     if (lora_calls.current() == call::state::ringing &&
         app_config::ring_tone_ms > 0 && !speaker::testing() &&
@@ -695,6 +878,10 @@ void print_lora()
     {
         Serial.printf(" with %u", lora_calls.peer());
     }
+    Serial.printf(" | texts delivered %lu not delivered %lu retries %lu",
+        static_cast<unsigned long>(lora_text_delivered),
+        static_cast<unsigned long>(lora_text_failed),
+        static_cast<unsigned long>(lora_text_retries));
     Serial.printf(" | sent %lu failed %lu dropped %lu | received %lu errors "
                   "%lu dropped %lu | accepted %lu rejected %lu | sessions",
         static_cast<unsigned long>(c.sent),
@@ -753,7 +940,12 @@ bool setup_lora()
     timing.ping_ms = app_config::lora_ping_ms;
     timing.link_lost_ms = app_config::lora_link_lost_ms;
     timing.jitter_ms = app_config::lora_jitter_ms;
+    timing.accept_repeat_ms = app_config::lora_accept_repeat_ms;
     lora_calls.begin(own_id, timing);
+    lora_calls.seed(esp_random());  // Different delays every boot.
+    lora_text_tx.begin(app_config::lora_text_tries,
+        app_config::lora_text_retry_ms, app_config::lora_jitter_ms,
+        esp_random());
     Serial.printf("LORA radio on %s, LCD on %s | %.1f MHz SF%u\n",
         app_config::lora_on_hspi ? "HSPI" : "SPI (SPI2)",
         app_config::lora_on_hspi ? "SPI (SPI2)" : "HSPI",
@@ -772,7 +964,7 @@ void service_lora(uint32_t now)
     lora_radio::received_frame frame;
     while (lora_radio::receive(&frame))
     {
-        if (lora_muted)
+        if (lora_muted || lora_muted_rx_only)
         {
             ++lora_muted_rx;
             continue;
@@ -802,11 +994,13 @@ bool run_lora_command(const char *line, uint32_t now)
         return true;
     }
     if (strcmp(line, "lora mute on") == 0 ||
-        strcmp(line, "lora mute off") == 0)
+        strcmp(line, "lora mute off") == 0 || strcmp(line, "lora mute rx") == 0)
     {
-        lora_muted = line[11] == 'n';
+        lora_muted = strcmp(line + 10, "on") == 0;
+        lora_muted_rx_only = strcmp(line + 10, "rx") == 0;
         Serial.printf("LORA mute %s | dropped so far: sent %lu received %lu\n",
-            lora_muted ? "on (nothing sent or received)" : "off",
+            lora_muted ? "on (nothing sent or received)" :
+            lora_muted_rx_only ? "rx (nothing received)" : "off",
             static_cast<unsigned long>(lora_muted_tx),
             static_cast<unsigned long>(lora_muted_rx));
         return true;

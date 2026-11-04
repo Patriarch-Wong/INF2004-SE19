@@ -84,6 +84,11 @@ struct timing
     // the same period can keep transmitting at the same moment, and a
     // half-duplex radio hears nothing while it sends.
     uint32_t jitter_ms = 0;
+    // The asked side sends its accept again this long (plus jitter) after
+    // accepting, unless the asker is heard first. 0 (ESP-NOW): never. On
+    // LoRa an accept that crosses the asker's resend on air is lost, and
+    // the asker would only connect at its next resend, 2-3 s later.
+    uint32_t accept_repeat_ms = 0;
 };
 
 struct outgoing
@@ -96,6 +101,10 @@ class machine
 {
 public:
     void begin(uint8_t own_id, const timing &settings = timing());
+    // Seeds the random delays (timing::jitter_ms). begin() seeds from the
+    // board ID; the firmware calls this with the hardware RNG so each boot
+    // differs.
+    void seed(uint32_t value);
 
     // User actions. Each returns false, and changes nothing, if the action
     // does not apply in the current state.
@@ -171,6 +180,7 @@ private:
     void enter(state next, uint32_t now);
     void finish(end_reason reason, uint8_t final_op, uint32_t now);
     void send(uint8_t to, uint8_t kind, uint32_t which, uint32_t now);
+    uint32_t jitter();
 
     timing times;
     uint8_t own = 0;
@@ -181,6 +191,8 @@ private:
     uint32_t entered_ms = 0;
     uint32_t last_sent_ms = 0;
     uint32_t last_heard_ms = 0;
+    bool accept_repeat = false;  // Waiting to send the accept once more.
+    uint32_t accept_repeat_from = 0;
     uint32_t random_state = 0x9E3779B9u;  // xorshift32, seeded by begin().
     end_reason ended = end_reason::none;
     uint32_t ends = 0;

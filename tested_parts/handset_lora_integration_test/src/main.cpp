@@ -23,6 +23,7 @@
 #include "control_frame.h"
 #include "kdf.h"
 #include "lora_radio.h"
+#include "lora_text.h"
 #include "mic.h"
 #include "network_config.h"
 #include "network_key.h"
@@ -362,7 +363,7 @@ void print_help()
     Serial.println("D-pad: press NAME [MS] | hold NAME | release [NAME] | "
                    "ui (NAME: up down left right ok cancel ptt)");
     Serial.println("LoRa: lora | lora connect N | lora hello | lora bye "
-                   "| lora log on|off | lora mute on|off "
+                   "| lora log on|off | lora mute on|off|rx "
                    "(accept, decline, disconnect also work for LoRa)");
 }
 

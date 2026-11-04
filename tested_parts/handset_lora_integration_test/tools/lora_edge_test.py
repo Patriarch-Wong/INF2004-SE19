@@ -8,6 +8,8 @@ evidence/<run>_board1.txt and _board2.txt.
 
     ~/.platformio/penv/bin/python tools/lora_edge_test.py edge1 \\
         /dev/cu.usbmodem5B5F0216001 /dev/cu.usbmodem5B5F0215971 [TEST ...]
+
+TEST names are the keys of TESTS below (default: all).
 """
 import re
 import sys
@@ -444,6 +446,66 @@ def esp_connect(a, b):
                 b.wait(r"^LINK connected to", 2, s_b))
 
 
+def count(board, pattern, since):
+    regex = re.compile(pattern)
+    with board.lock:
+        return sum(1 for _, text in board.lines[since:] if regex.search(text))
+
+
+def test_delivery():
+    print("E11 delivery receipts and retries", flush=True)
+    if not check(lora_connect(B1, B2), "LoRa connected 1-2"):
+        return
+    s1, s2 = B1.mark(), B2.mark()
+    B1.press("up")
+    check(bool(B1.wait(r'LORA TEXT delivered to 2: "Hello from Board 1" '
+                       r'.*after 1 try', 3, s1)),
+          "Hello delivered on the first try")
+    check(bool(B2.wait(r'LORA TEXT from 1 .*"Hello from Board 1"', 1, s2)),
+          "and shown on board 2")
+    screen, _ = B1.ui()
+    check(screen == "lora_connected", f"board 1 still connected ({screen})")
+
+    print("  board 2 out of range: 3 tries, then not delivered", flush=True)
+    time.sleep(1.2)
+    B2.send("lora mute on")
+    s1, s2 = B1.mark(), B2.mark()
+    B1.press("down")
+    m = B1.wait(r"LORA TEXT not delivered to 2", 12, s1)
+    check(bool(m), "Bye ends as not delivered")
+    check(count(B1, r"LORA TEXT sent to 2 .*\| #\d+ try", s1) == 3,
+          "after exactly 3 tries")
+    check(not B2.find(r"LORA TEXT from 1", s2)[1], "board 2 heard none")
+    B2.send("lora mute off")
+
+    print("  receipts lost: shown once, receipt sent for every try",
+          flush=True)
+    time.sleep(1.2)
+    B1.send("lora mute rx")
+    s1, s2 = B1.mark(), B2.mark()
+    B1.press("up")
+    check(bool(B1.wait(r"LORA TEXT not delivered to 2", 12, s1)),
+          "with every receipt lost, board 1 says not delivered")
+    check(count(B2, r'LORA TEXT from 1 .*"Hello from Board 1"', s2) == 1,
+          "board 2 showed the Hello once")
+    check(count(B2, r"LORA TEXT #\d+ from 1 again: receipt resent", s2) == 2,
+          "and answered both repeats")
+    B1.send("lora mute off")
+    time.sleep(0.5)
+    s1 = B1.mark()
+    time.sleep(1.2)
+    B1.press("down")
+    check(bool(B1.wait(r"LORA TEXT delivered to 2", 3, s1)),
+          "delivered again once receipts get through")
+    screen1, _ = B1.ui()
+    screen2, _ = B2.ui()
+    check(screen1 == screen2 == "lora_connected",
+          f"connection kept throughout ({screen1} / {screen2})")
+    B1.press("cancel", 0.3)
+    B2.wait(r"LORA LINK disconnected", 8)
+    wait_idle(B1, B2)
+
+
 def test_esp_basic():
     print("X1 ESP-NOW in this build: connect, hello, voice both ways",
           flush=True)
@@ -701,6 +763,7 @@ TESTS = {
     "noanswer": test_no_answer,
     "loss": test_link_loss,
     "reconnect": test_reconnect_texts,
+    "delivery": test_delivery,
     "reboot": test_reboot,
     "esp": test_esp_basic,
     "espedge": test_esp_edges,
