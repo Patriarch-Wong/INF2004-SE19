@@ -39,11 +39,13 @@ INF2004-SE19/
     ├── espnow_test/          Two-board ESP-NOW exchange with MAC whitelist
     ├── espnow_encrypt_test/  espnow_test with CCMP encryption (PMK + LMK)
     ├── espnow_sd_test/       One-way ESP-NOW transfer saved and verified on SD
+    ├── lcd_lora_test/        LCD + LoRa on separate SPI buses, hello/bye texts both ways (915 MHz)
     ├── lora_test/            Core1121 868 MHz LoRa broadcast send and receive
     ├── mic_speaker_e2e_test/ Mic on one board to speaker on another, encrypted
     ├── mic_speaker_e2e_test2/ mic_speaker_e2e_test with auto-unmute on incoming audio
     ├── shared_keys/          One key file (network + pair keys, boards 1–5) shared by projects
     ├── handset_integration_test/ D-pad + LCD connect/disconnect and encrypted push-to-talk voice
+    ├── handset_lora_integration_test/ handset_integration_test plus LoRa connections sending hello/bye
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
     └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
 ```
@@ -119,10 +121,12 @@ its [README](esp32_s3n16r8_template/README.md).
 | [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | Hardware-tested: encrypted two-way exchange; wrong-key and plaintext senders rejected; recovery after restore |
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
 | [lora_test](tested_parts/lora_test/) | Changed from PING/PONG (hardware-confirmed) to broadcast send and receive; broadcast version not yet hardware-tested |
+| [lcd_lora_test](tested_parts/lcd_lora_test/) | LCD and LoRa together, no menu: radio state, hello/bye texts, RSSI on screen; builds; not yet hardware-tested |
 | [lora_encrypt_test](tested_parts/lora_encrypt_test/) | Direct AES-256-GCM serial chat, no relays; builds and host crypto tests pass; user confirmed working on hardware |
 | [mic_speaker_e2e_test](tested_parts/mic_speaker_e2e_test/) | Mic and speaker follow ESP32_Mic_Loopback_v4.ino; one live stream arrived intact (134/134 frames, CRC match) but the speaker was muted, so not yet heard. Earlier PDM build passed E1 (500/500, 26.60 dB) |
 | [mic_speaker_e2e_test2](tested_parts/mic_speaker_e2e_test2/) | Auto-unmute variant of `mic_speaker_e2e_test`; builds and host tests pass; not yet hardware-tested |
 | [handset_integration_test](tested_parts/handset_integration_test/) | D-pad + LCD: connect to a pre-paired handset, push-to-talk encrypted voice, disconnect or link loss drops both sides; builds and host tests (including connections) pass; not yet hardware-tested |
+| [handset_lora_integration_test](tested_parts/handset_lora_integration_test/) | handset_integration_test plus LoRa: Menu → LoRa → board, accept/decline, then UP sends "Hello from Board N" and DOWN "Bye from Board N", encrypted; radio starts in the background and never freezes the menu; hardware-tested on boards 1 and 2: connect, texts, decline/cancel/no answer, glare, busy, link loss, reboot (34/34 edge checks); ESP-NOW voice not re-run in this build |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 
