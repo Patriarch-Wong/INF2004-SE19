@@ -41,6 +41,8 @@ esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size);
 // 18, 24, 36, 48, 54 (OFDM). Logs the result as RADIO. Returns null on
 // success, or what failed.
 const char *configure(unsigned channel, unsigned rate_mbps);
+// The ESP-NOW rate configure() last set (Mbit/s).
+unsigned rate_mbps();
 
 // Acknowledgements of unicast frames to device `id`, from ESP-NOW's send
 // callback: frames in a row the peer's radio never acknowledged (after the

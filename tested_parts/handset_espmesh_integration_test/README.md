@@ -123,6 +123,12 @@ waits on.
   parent.
 - `src/ui.inc`: an ESP-MESH menu entry and list. The connected screen is
   shared (titled `Mesh connected`). The Status page gains two mesh lines.
+  - A **Routes** page shows where this board is in the mesh and the route
+    to each board.
+  - A **Tools** page holds every test setting that was serial-only: rate,
+    leave/rejoin mesh, become root, mute mesh and LoRa.
+  - On the Volume page, OK mutes and unmutes.
+  - **Nothing needs the serial port.**
 - ESP-NOW's "busy" flag is now refreshed every loop pass, as LoRa's is. In
   the LoRa build it was set only when a request arrived, so after answering
   one "busy" a later ESP-NOW `connect` could be refused until another
@@ -139,14 +145,39 @@ Menu ── ESP-NOW ──▶ ESP-NOW list ── OK on Board 2 ──▶ (ESP-N
  │    red failed,                                                             UP/DOWN: volume
  │    grey joining)                                                           CANCEL: disconnect
  ├──── LoRa ──────▶ LoRa list ────── (LoRa, as before)
- ├──── Volume
- └──── Status
+ ├──── Volume        (OK: mute/unmute)
+ ├──── Status
+ ├──── Routes        this board's place in the mesh, the mesh route to each board
+ └──── Tools         test settings: OK switches, red dot = on
 ```
 
-The menu has five rows, so it scrolls (bar on the right). The ESP-MESH
-list's bottom line says where this board is: `Root, 2 boards`,
-`Layer 2, root Board 1`, `Looking; root in 9 s` (counting down to this
-board's takeover), or `Mesh off (serial: mesh on)`.
+The menu has 7 rows, so it scrolls (bar on the right). Every page goes
+back with CANCEL. The ESP-MESH list's bottom line says where this board
+is:
+- `Root, 2 boards`
+- `Layer 2, root Board 1`
+- `Looking; root in 9 s` (counting down to this board's takeover)
+- `Mesh off (Tools: Rejoin mesh)`
+
+**Routes page:**
+- **This board:** root, or its layer and parent
+- **Root:** which board is root
+- **Children:** the boards joined through this one
+- **Each other board:** its mesh route, for example
+  `Board 2: 1 > 3 > 2, via Board 3` in orange, or `offline`
+- **Rate:** the ESP-NOW rate
+
+It updates every second.
+
+**Tools page:** OK switches the selected row. A red dot means a test
+setting is on, and the line above the hints confirms each change.
+
+| Row | Does |
+| --- | --- |
+| `Rate: 1 Mbps` | Switch the ESP-NOW rate between 1 and 6 Mbit/s (set it the same on every board) |
+| `Leave mesh` / `Rejoin mesh` | Leave the mesh completely, as if this board were down (another takes over if it was root); then come back |
+| `Be mesh root` | Become a root now, for split tests (green dot while this board is root) |
+| `Mute mesh`, `Mute LoRa` | Drop everything that way, as out of range would, for link-loss tests |
 
 The connected (hold OK to talk) screen shows **the route** under the
 other board's name, kept up to date during the call:
@@ -212,13 +243,26 @@ PlatformIO toolbar and press Upload. **Each board must get its own
 environment**: the firmware checks its MAC against `network_config.h` and
 stops with "Wrong boardN environment" otherwise.
 
-### 2. Watch the boot (serial monitor, 921600 baud)
+Steps 2–4 use only the D-pad and the screen. No serial monitor or typed
+commands are needed.
 
-```powershell
-~\.platformio\penv\Scripts\pio.exe device monitor --port COM11 -b 921600
-```
+### 2. Check the mesh formed
 
-Reset both boards. Within about 30 s you should see:
+Press RESET on all boards. Within about 30 s:
+
+1. **Board 1:** Menu → **Routes** shows `Mesh: root, 2 boards`,
+   `Root: Board 1`, `Children: Board 2`, `Board 2: 1 > 2, direct` (green).
+2. **Board 2:** Menu → **Routes** shows `Mesh: layer 2, parent Board 1`,
+   `Root: Board 1`, `Board 1: 2 > 1, direct`.
+3. **Both:** the menu's ESP-MESH dot is **green**. On the ESP-MESH list,
+   `Connect Board N` has a green dot.
+
+Board 2 must **not** show `Mesh: root`. That would mean it didn't find
+board 1's mesh in time and became a second root. It sorts itself out
+within about a minute; see Troubleshooting if it doesn't.
+
+Optional, with a serial monitor (921600 baud) on the PC, the boot log shows
+the same:
 
 | Board 1 (becomes root) | Board 2 (node) |
 | --- | --- |
@@ -231,17 +275,7 @@ Reset both boards. Within about 30 s you should see:
 | `MESH SESSION established with 2` | `MESH SESSION established with 1` |
 | `MESH PEER 2 (Board 2) online` | `MESH PEER 1 (Board 1) online` |
 
-Board 2 must **not** log `becoming the root`: that would mean it didn't
-find board 1's mesh in time.
-
-Type `mesh` in the monitor for the full state: root or node, layer, children,
-boards, frame counters, sessions. Every 10 s each board also prints a
-`MESH |` line next to the ESP-NOW `Status |` and `LORA |` lines.
-
-On the LCD: the menu's ESP-MESH dot turns **green**, and on the ESP-MESH
-list, `Connect Board 2` gets a green dot.
-
-### 3. Connect and talk over the mesh (D-pad)
+### 3. Connect and talk over the mesh
 
 1. Board 1: Menu → **ESP-MESH** → `Connect Board 2` → **OK**.
 2. Board 2 beeps and shows **"Board 1 wants to connect over ESP-MESH"**.
@@ -252,16 +286,29 @@ list, `Connect Board 2` gets a green dot.
    talking"), then a roger beep. Then the other way round.
 5. **RIGHT** on board 1: board 2 shows "Hello from Board 1" in the banner.
 6. **CANCEL** on either board: both show **Disconnected**.
+7. After the other board talks, the screen's bottom line shows
+   `Last heard … s ago` and `N/N frames ok`. `MISSING` there means frames
+   were lost.
 
-The same from the serial monitor: `mesh connect 2` on board 1, `accept` on
-board 2, then `talk 3` / `test 5` / `hello` / `disconnect`.
+### 4. Tests on the boards
 
-### 4. Run the scripted test
+| Test | Steps | Pass |
+| --- | --- | --- |
+| T1 Link loss | Connected over the mesh. Board 2: Tools → **Mute mesh** → OK | Both show **Connection lost** within ~10 s. **Mute mesh** → OK again: board 2's dot turns green again on board 1's ESP-MESH list |
+| T2 Root down | Board 1 (root): Tools → **Leave mesh** → OK | Board 2's Routes page: `Mesh: Looking; root in N s`, then about 14 s later `Mesh: root, 1 board` |
+| T3 Root back | After T2, board 1: Tools → **Rejoin mesh** → OK | Board 1's Routes page: `Mesh: layer 2, parent Board 2`, never `Mesh: root` (it joins, there is never a second root). Connect 1 → 2 over ESP-MESH works |
+| T4 Split | Board 2 (a node): Tools → **Be mesh root** → OK | Two roots for a while; within about a minute the one nobody joined steps down and joins the other (Routes: one board `root`, the other `layer 2`) |
+| T5 One at a time | Connected over the mesh, try connecting over ESP-NOW or LoRa | Refused: `not reachable` notice and a low beep |
+| T6 Middleman | Board 3 on, placed so board 2 can't reach board 1 directly | Board 2's Routes page: `parent Board 3`. Board 3: `Children: Board 2`. Connected screen: `Route: 1 > 3 > 2, via Board 3` |
+| T7 Faster radio | If ESP-NOW voice shows `MISSING`: on **every** board Tools → **Rate: 1 Mbps** → OK (becomes `Rate: 6 Mbps`) | Fewer or no missing frames |
 
-`tools/mesh_test.py` drives both boards over serial and checks their logs.
-Close any serial monitors first. The script reboots both boards (`reboot`)
-so each log starts at boot. Port 1 must be board 1. A full run takes about
-10 minutes.
+### 5. Optional: scripted test from a PC
+
+You don't need this; it repeats the tests above automatically, with the
+serial log as evidence. `tools/mesh_test.py` drives both boards over USB
+serial and checks their logs. Close any serial monitors first. The script
+reboots both boards (`reboot`) so each log starts at boot. Port 1 must be
+board 1. A full run takes about 10 minutes.
 
 ```powershell
 ~\.platformio\penv\Scripts\python.exe tools\mesh_test.py mesh1 COM11 COM4
@@ -290,20 +337,30 @@ frame by frame (sender's log first, so run it both ways):
 | M9 `rootdown` | The root goes down (`mesh off`): the other board logs `becoming the root` within 45 s; the old root comes back (`mesh on`) as a node under it, not a second root; both online; connect and a 5 s voice stream work |
 | M10 `split` | The node is forced to be a second root (`mesh root`): within 100 s one root, nobody having joined it, steps down and joins the other; both online; connect works |
 
-### 5. Tests by hand (not scripted)
+### 6. More tests by hand (power and distance)
 
 | Test | Steps | Pass |
 | --- | --- | --- |
-| H1 Root off | Power off board 1 while boards 2 and 3 are idle | Boards 2 and 3: `MESH left the mesh`; their ESP-MESH lists count down `Looking; root in N s`. Board 2: `becoming the root` ~14 s later; board 3 joins it (`MESH joined \| parent 2`). Board 2 → ESP-MESH → Board 3 connects. ESP-NOW and LoRa work throughout |
-| H1b Root back | After H1, power board 1 on | Board 1 joins board 2's mesh (`MESH joined`), never logs `becoming the root`; all three dots green |
+| H1 Root off | Power off board 1 while boards 2 and 3 are idle | Boards 2 and 3: their ESP-MESH lists and Routes pages count down `Looking; root in N s`. About 14 s later board 2's Routes page shows `Mesh: root`; board 3's shows `parent Board 2`. Board 2 → ESP-MESH → Board 3 connects. ESP-NOW and LoRa work throughout |
+| H1b Root back | After H1, power board 1 on | Board 1's Routes page: `Mesh: layer 2`, never `Mesh: root`; all three dots green |
 | H2 Root off mid-call | Boards 1 and 2 connected over mesh, power off board 1 | Board 2 shows **Connection lost** within ~10 s, takes over as root ~14 s later, and connects to board 3 if it is up |
-| H2b Middleman off | Board 3 as the middleman (`mesh` on board 2 shows `parent Board 3`, on board 3 `children 1 (Board 2)`), power board 3 off | Board 2 shows `MESH left the mesh`, rejoins through board 1 if in range; a call through board 3 ends with **Connection lost** |
-| H3 Node out of range | Connected over mesh, walk board 2 away | Voice degrades, then **Connection lost**; back in range, board 2 rejoins (`MESH joined`) |
-| H4 Busy (needs board 3) | Boards 1 and 2 connected over mesh; board 3 asks board 1 over ESP-NOW, ESP-MESH or LoRa | Board 3 shows **Busy** |
-| H5 Multi-hop (needs board 3) | Board 1 (root) in the middle, boards 2 and 3 at either end, out of each other's ESP-NOW range | Board 2 → ESP-MESH → Board 3 connects and voice plays; `mesh` on board 1 shows `boards 3` |
-| H6 LoRa unchanged | LoRa tests L1–L11 from [handset_lora_integration_test](../handset_lora_integration_test/README.md#hardware-tests-boards-1-and-2) (Menu → LoRa) | Same results as there; `tools/lora_edge_test.py` also runs on this build |
+| H2b Middleman off | Board 3 as the middleman (board 2's Routes: `parent Board 3`; board 3's: `Children: Board 2`), power board 3 off | Board 2 rejoins through board 1 if in range (Routes: `parent Board 1`); a call through board 3 ends with **Connection lost** |
+| H3 Node out of range | Connected over mesh, walk board 2 away | Voice degrades, then **Connection lost**; back in range, board 2 rejoins (Routes: `Mesh: layer 2`) |
+| H4 Busy (needs board 3 with a screen) | Boards 1 and 2 connected over mesh; board 3 asks board 1 over ESP-NOW, ESP-MESH or LoRa | Board 3 shows **Busy** |
+| H5 Multi-hop (needs board 3) | Board 1 (root) in the middle, boards 2 and 3 at either end, out of each other's ESP-NOW range | Board 2 → ESP-MESH → Board 3 connects and voice plays; board 1's Routes page shows `Mesh: root, 3 boards` |
+| H6 LoRa unchanged | LoRa tests L1–L11 from [handset_lora_integration_test](../handset_lora_integration_test/README.md#hardware-tests-boards-1-and-2) (Menu → LoRa; for its mute steps use Tools → **Mute LoRa**) | Same results as there |
 
-## Serial commands
+## Serial commands (optional)
+
+Nothing above needs them; they are the same functions, for scripted tests
+and for reading the log.
+
+| Command | Same as on screen |
+| --- | --- |
+| `mesh off` / `mesh on` / `mesh root` | Tools → Leave mesh / Rejoin mesh / Be mesh root |
+| `mesh mute on\|off`, `lora mute on\|off` | Tools → Mute mesh / Mute LoRa |
+| `radio 11 6` / `radio 11 1` | Tools → Rate |
+| `mesh` | Routes page (plus frame counters) |
 
 Everything from `handset_lora_integration_test` (`help` lists them), plus:
 
@@ -334,9 +391,9 @@ shared `TX_START` / `RX_START` (with `via=mesh` or `via=espnow`),
 | `Stopped` with `Wrong boardN environment for this board` (the log line before it says `Built for device X, but this board is device Y`) | The firmware for board X went onto board Y: the ports were swapped. Identify the ports by USB serial ([step 1](#1-build-and-flash)) and upload `boardY` to that board |
 | Boot log starts with `Handset LoRa integration` and has no `MESH` lines | That board still runs the LoRa build: its upload didn't happen (missed BOOT + RESET, or the wrong port) |
 | Board 2 logs `becoming the root` although board 1 is on | It didn't find board 1's mesh within its 14 s: board 1 not flashed with this build, out of range, or the mesh slow to form. Every board must use the same `mesh_id`, `mesh_root_id` and channel: reflash all from this folder. Two roots in range merge by themselves within about a minute (the lonely one steps down) |
-| `MESH no mesh found yet` repeating, nobody becomes root | Look at the countdown (`mesh`, or the ESP-MESH list): a takeover waits while voice plays. If it never comes, send the log |
+| `MESH no mesh found yet` repeating, nobody becomes root | Look at the countdown on the Routes page or the ESP-MESH list: a takeover waits while voice plays. If it never comes, send the log |
 | `MESH <step> failed: ...`, red ESP-MESH dot | The mesh didn't (re)start. It is tried again every 10 s (`MESH trying again`); the step and error are in the log and on the Status page; ESP-NOW and LoRa still work. If it keeps failing, send the boot log |
-| `mesh` shows `unknown` frames > 0 | Mesh frames from a MAC not in `network_config.h`: a board not provisioned there |
+| Serial `mesh` (optional) shows `unknown` frames > 0 | Mesh frames from a MAC not in `network_config.h`: a board not provisioned there |
 | `MESH warning: Wi-Fi power save is ...` | The mesh turned modem sleep back on; ESP-NOW voice may stutter. Report it with the log |
 | `RADIO refused: ESP-MESH holds channel 11` | `radio CH MBPS` with another channel; only the rate can change here |
 | Mesh voice drops frames but ESP-NOW doesn't | Between two non-root boards, mesh frames pass through the root (one more hop); board 2 to the root is direct. Compare `RX_END` counters with `check_streams.py`; try `buffer 500` |

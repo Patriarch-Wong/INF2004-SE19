@@ -1271,6 +1271,48 @@ void service_mesh(uint32_t now)
     service_mesh_calls(now);
 }
 
+// Test settings, from the Tools page (ui.inc) or serial: link loss, and a
+// board going down, without unplugging anything.
+
+// Drops every mesh frame sent and received, as out of range would (the
+// mesh itself stays up).
+void mesh_set_muted(bool on)
+{
+    mesh_muted = on;
+    Serial.printf("MESH mute %s | dropped so far: sent %lu received %lu\n",
+        mesh_muted ? "on (nothing sent or received)" : "off",
+        static_cast<unsigned long>(mesh_muted_tx),
+        static_cast<unsigned long>(mesh_muted_rx));
+}
+
+// Leaves the mesh completely, as if this board were down; another takes
+// over if it was the root. mesh_rejoin() comes back.
+void mesh_leave()
+{
+    mesh_switched_off = true;
+    mesh_looking = mesh_alone = false;
+    mesh_radio::stop();
+    Serial.println("MESH off: this board left the mesh, as if it were down "
+                   "(Tools: Rejoin mesh)");
+}
+
+// Looks for the mesh and joins it, as at boot.
+void mesh_rejoin(uint32_t now)
+{
+    mesh_switched_off = false;
+    mesh_restart(false, now);
+}
+
+// Makes this board a root now: a second root, if another is up, until the
+// one nobody joins steps down.
+void mesh_force_root(uint32_t now)
+{
+    mesh_switched_off = false;
+    mesh_restart(true, now);
+    Serial.println("MESH forced to be a root: if another root is up, the one "
+                   "nobody joins steps down within about a minute");
+}
+
 // Serial commands. accept, decline and disconnect act on the mesh
 // connection while one is in progress; hello, talk, test and stop follow
 // it on their own (voice_via()).
@@ -1283,36 +1325,22 @@ bool run_mesh_command(const char *line, uint32_t now)
     }
     if (strcmp(line, "mesh mute on") == 0 || strcmp(line, "mesh mute off") == 0)
     {
-        mesh_muted = strcmp(line + 10, "on") == 0;
-        Serial.printf("MESH mute %s | dropped so far: sent %lu received "
-                      "%lu\n",
-            mesh_muted ? "on (nothing sent or received)" : "off",
-            static_cast<unsigned long>(mesh_muted_tx),
-            static_cast<unsigned long>(mesh_muted_rx));
+        mesh_set_muted(strcmp(line + 10, "on") == 0);
         return true;
     }
-    // Node-down tests without unplugging anything.
     if (strcmp(line, "mesh off") == 0)
     {
-        mesh_switched_off = true;
-        mesh_looking = mesh_alone = false;
-        mesh_radio::stop();
-        Serial.println("MESH off: this board left the mesh, as if it were "
-                       "down (`mesh on` to come back)");
+        mesh_leave();
         return true;
     }
     if (strcmp(line, "mesh on") == 0)
     {
-        mesh_switched_off = false;
-        mesh_restart(false, now);  // Look for the mesh first, as at boot.
+        mesh_rejoin(now);
         return true;
     }
     if (strcmp(line, "mesh root") == 0)
     {
-        mesh_switched_off = false;
-        mesh_restart(true, now);
-        Serial.println("MESH forced to be a root: if another root is up, the "
-                       "one nobody joins steps down within about a minute");
+        mesh_force_root(now);
         return true;
     }
     if (strncmp(line, "mesh connect", 12) == 0 &&

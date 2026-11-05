@@ -987,6 +987,20 @@ void service_lora(uint32_t now)
     service_lora_calls(now);
 }
 
+// From the Tools page (ui.inc) or serial: drop every LoRa frame sent and
+// received (`on`), or only received ones (`rx_only`), as out of range
+// would; the radio stays on.
+void lora_set_muted(bool on, bool rx_only = false)
+{
+    lora_muted = on;
+    lora_muted_rx_only = rx_only;
+    Serial.printf("LORA mute %s | dropped so far: sent %lu received %lu\n",
+        lora_muted ? "on (nothing sent or received)" :
+        lora_muted_rx_only ? "rx (nothing received)" : "off",
+        static_cast<unsigned long>(lora_muted_tx),
+        static_cast<unsigned long>(lora_muted_rx));
+}
+
 // Serial commands. accept, decline and disconnect act on the LoRa
 // connection while one is in progress, else on ESP-NOW.
 bool run_lora_command(const char *line, uint32_t now)
@@ -1005,13 +1019,8 @@ bool run_lora_command(const char *line, uint32_t now)
     if (strcmp(line, "lora mute on") == 0 ||
         strcmp(line, "lora mute off") == 0 || strcmp(line, "lora mute rx") == 0)
     {
-        lora_muted = strcmp(line + 10, "on") == 0;
-        lora_muted_rx_only = strcmp(line + 10, "rx") == 0;
-        Serial.printf("LORA mute %s | dropped so far: sent %lu received %lu\n",
-            lora_muted ? "on (nothing sent or received)" :
-            lora_muted_rx_only ? "rx (nothing received)" : "off",
-            static_cast<unsigned long>(lora_muted_tx),
-            static_cast<unsigned long>(lora_muted_rx));
+        lora_set_muted(strcmp(line + 10, "on") == 0,
+            strcmp(line + 10, "rx") == 0);
         return true;
     }
     if (strncmp(line, "lora connect", 12) == 0 &&

@@ -47,6 +47,7 @@ INF2004-SE19/
     ├── handset_integration_test/ D-pad + LCD connect/disconnect and encrypted push-to-talk voice
     ├── handset_lora_integration_test/ handset_integration_test plus LoRa connections sending hello/bye
     ├── handset_espmesh_integration_test/ handset_lora_integration_test plus ESP-MESH (no router) voice connections
+    ├── handset_espnow_mesh_integration_test/ handset_espmesh_integration_test plus ESP-NOW flood mesh and routed relay
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
     └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
 ```
@@ -129,6 +130,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [handset_integration_test](tested_parts/handset_integration_test/) | D-pad + LCD: connect to a pre-paired handset, push-to-talk encrypted voice, disconnect or link loss drops both sides; builds and host tests (including connections) pass; not yet hardware-tested |
 | [handset_lora_integration_test](tested_parts/handset_lora_integration_test/) | handset_integration_test plus LoRa: Menu → LoRa → board, accept/decline, then UP sends "Hello from Board N" and DOWN "Bye from Board N", encrypted; radio starts in the background and never freezes the menu; hardware-tested on boards 1 and 2: connect, texts, decline/cancel/no answer, glare, busy, link loss, reboot (34/34 edge checks); ESP-NOW voice not re-run in this build |
 | [handset_espmesh_integration_test](tested_parts/handset_espmesh_integration_test/) | handset_lora_integration_test plus ESP-MESH: Menu → ESP-MESH → board, accept/decline, hold OK to talk, RIGHT hello, all encrypted, as over ESP-NOW; no router (board 1 is the preferred mesh root; if it is down the next board takes over); all five environments build; not yet hardware-tested (`tools/mesh_test.py` ready) |
+| [handset_espnow_mesh_integration_test](tested_parts/handset_espnow_mesh_integration_test/) | handset_espmesh_integration_test plus the same connections, voice and hello over ESP-NOW with every board relaying, two ways: flood mesh (re-broadcast) and routed relay (route discovery, hop-by-hop unicast); route shown on screen; no router, no root; builds; not yet hardware-tested (`tools/relay_test.py` ready) |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 

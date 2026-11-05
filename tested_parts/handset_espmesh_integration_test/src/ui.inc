@@ -18,9 +18,18 @@
 //   LoRa connected  UP sends "Hello from <this board>", DOWN sends "Bye
 //                   from <this board>", CANCEL disconnects
 //   Disconnected    why; any button or 3 s returns to the last list
-//   Volume          UP/RIGHT louder, DOWN/LEFT quieter, CANCEL back
+//   Volume          UP/RIGHT louder, DOWN/LEFT quieter, OK mute/unmute,
+//                   CANCEL back
 //   Status          IDs, sessions, mesh, LoRa radio and counters, CANCEL
 //                   back
+//   Routes          this board's place in ESP-MESH, and each board's mesh
+//                   route
+//   Tools           the test settings, OK switches each (red dot: on):
+//                   ESP-NOW rate, leave/rejoin ESP-MESH, become mesh root,
+//                   mute the mesh or LoRa (link loss)
+//
+// Nothing needs the serial port: every function and test setting is on
+// these screens (the serial commands do the same, for scripted tests).
 //
 // The connection state picks the screen: a request over any radio
 // replaces whatever is shown. Only one connection runs at a time. Screens
@@ -55,8 +64,10 @@ enum class screen : uint8_t
     espnow_list,
     mesh_list,
     lora_list,
+    tools,
     volume,
     status,
+    routes,
     connecting,
     request,
     connected,
@@ -87,9 +98,9 @@ constexpr int16_t row_pitch = 40;
 constexpr int16_t row_height = 34;
 constexpr int16_t row_margin = 8;
 constexpr uint8_t visible_rows = 4;
-// The longest list: every other handset (4), or the 5 top-menu rows (the
-// menu scrolls).
-constexpr uint8_t max_rows = max_id > 5 ? max_id : 5;
+// The longest list: every other handset (4), or the 7 top-menu rows (the
+// menu scrolls; the Tools page has 5).
+constexpr uint8_t max_rows = max_id > 7 ? max_id : 7;
 constexpr int16_t box_top = 84;
 constexpr int16_t box_height = 64;
 constexpr int16_t volume_top = 158;
@@ -113,8 +124,9 @@ button buttons[] = {
 };
 constexpr size_t button_count = sizeof(buttons) / sizeof(buttons[0]);
 
-// Menu rows. The top menu holds the three radios and two pages; each
-// radio's list holds the handsets.
+// Menu rows. The top menu holds the three radios and four pages; each
+// radio's list holds the handsets; the Tools page holds the test settings,
+// so nothing needs the serial port.
 enum class row_kind : uint8_t
 {
     espnow_page,
@@ -122,9 +134,17 @@ enum class row_kind : uint8_t
     lora_page,
     volume,
     status,
+    routes_page,
+    tools_page,
     connect,       // ESP-NOW connection to `peer`.
     mesh_connect,  // ESP-MESH connection to `peer`.
     lora_connect,  // LoRa connection to `peer`.
+    // Tools: OK switches each.
+    tool_rate,        // ESP-NOW rate, 1 or 6 Mbit/s.
+    tool_mesh_leave,  // Leave ESP-MESH (as if down), or rejoin.
+    tool_mesh_root,   // Become an ESP-MESH root now.
+    tool_mute_mesh,   // Drop everything over ESP-MESH.
+    tool_mute_lora,   // ... LoRa.
 };
 
 struct menu_row
@@ -144,7 +164,7 @@ struct list_position
     uint8_t selected;
     uint8_t first_visible;
 };
-list_position positions[4] = {};  // Menu, ESP-NOW, ESP-MESH, LoRa.
+list_position positions[5] = {};  // Menu, ESP-NOW, ESP-MESH, LoRa, Tools.
 
 screen shown = screen::none;
 // What shows when not connected: a list, volume or status.
@@ -379,8 +399,63 @@ void row_label(const menu_row &row, char *label, size_t capacity)
     case row_kind::status:
         snprintf(label, capacity, "Status");
         break;
+    case row_kind::routes_page:
+        snprintf(label, capacity, "Routes");
+        break;
+    case row_kind::tools_page:
+        snprintf(label, capacity, "Tools");
+        break;
+    case row_kind::tool_rate:
+        snprintf(label, capacity, "Rate: %u Mbps", radio::rate_mbps());
+        break;
+    case row_kind::tool_mesh_leave:
+        snprintf(label, capacity, mesh_switched_off ? "Rejoin mesh" :
+            "Leave mesh");
+        break;
+    case row_kind::tool_mesh_root:
+        snprintf(label, capacity, "Be mesh root");
+        break;
+    case row_kind::tool_mute_mesh:
+        snprintf(label, capacity, "Mute mesh");
+        break;
+    case row_kind::tool_mute_lora:
+        snprintf(label, capacity, "Mute LoRa");
+        break;
     }
 }
+
+// A Tools row's dot: red while its test setting is on (a mute, out of the
+// mesh), green for "Be mesh root" while this board is the root. False: no
+// dot (the rate shows in the label).
+bool tool_dot(const menu_row &row, uint16_t *color)
+{
+    bool on = false;
+    switch (row.kind)
+    {
+    case row_kind::tool_mesh_leave: on = mesh_switched_off; break;
+    case row_kind::tool_mute_mesh: on = mesh_muted; break;
+    case row_kind::tool_mute_lora: on = lora_muted; break;
+    case row_kind::tool_mesh_root:
+        *color = mesh_radio::is_root() ? listen_color : outline_color;
+        return true;
+    default:
+        return false;
+    }
+    *color = on ? talk_color : outline_color;
+    return true;
+}
+
+// Everything the Tools rows show, so they are redrawn when any changes
+// (also from serial).
+uint32_t tools_state()
+{
+    return radio::rate_mbps() ^
+        static_cast<uint32_t>(mesh_muted) << 26 ^
+        static_cast<uint32_t>(lora_muted) << 27 ^
+        static_cast<uint32_t>(mesh_switched_off) << 28 ^
+        static_cast<uint32_t>(mesh_radio::is_root()) << 29;
+}
+uint32_t ui_drawn_tools = 0;
 
 void draw_menu_row(uint8_t index)
 {
@@ -415,6 +490,15 @@ void draw_menu_row(uint8_t index)
         // asked.
         lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
             ui_mesh_reachable[row.peer] ? listen_color : outline_color);
+    }
+    else if (row.kind >= row_kind::tool_rate)
+    {
+        uint16_t color = outline_color;
+        if (tool_dot(row, &color))
+        {
+            lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
+                color);
+        }
     }
     else if (row.kind == row_kind::lora_connect)
     {
@@ -475,7 +559,7 @@ const char *mesh_hint()
     if (mesh_switched_off)
     {
         snprintf(ui_mesh_hint, sizeof(ui_mesh_hint),
-            "Mesh off (serial: mesh on)");
+            "Mesh off (Tools: Rejoin mesh)");
         return ui_mesh_hint;
     }
     switch (mesh_radio::current())
@@ -579,6 +663,7 @@ void draw_menu_notice(uint32_t now)
     else
     {
         draw_field(shown == screen::menu ? "UP/DOWN: choose   OK: select" :
+                shown == screen::tools ? "UP/DOWN: choose  OK: switch" :
                 "UP/DOWN: choose  OK: connect", 8, 212, 1, muted_color, 224);
     }
 }
@@ -614,13 +699,12 @@ void draw_menu_rows()
 int list_index(screen list)
 {
     return list == screen::espnow_list ? 1 : list == screen::mesh_list ? 2 :
-        list == screen::lora_list ? 3 : 0;
+        list == screen::lora_list ? 3 : list == screen::tools ? 4 : 0;
 }
 
 bool is_list(screen value)
 {
-    return value == screen::menu || value == screen::espnow_list ||
-        value == screen::mesh_list || value == screen::lora_list;
+    return value == screen::menu || list_index(value) != 0;
 }
 
 // Fills `rows` for a list, keeping each list's own selection.
@@ -643,6 +727,18 @@ void load_rows(screen list)
         rows[row_count++] = {row_kind::lora_page, 0};
         rows[row_count++] = {row_kind::volume, 0};
         rows[row_count++] = {row_kind::status, 0};
+        rows[row_count++] = {row_kind::routes_page, 0};
+        rows[row_count++] = {row_kind::tools_page, 0};
+    }
+    else if (list == screen::tools)
+    {
+        const row_kind tools[] = {row_kind::tool_rate,
+            row_kind::tool_mesh_leave, row_kind::tool_mesh_root,
+            row_kind::tool_mute_mesh, row_kind::tool_mute_lora};
+        for (row_kind kind : tools)
+        {
+            rows[row_count++] = {kind, 0};
+        }
     }
     else
     {
@@ -699,6 +795,13 @@ void draw_menu(screen list, uint32_t now)
         draw_menu_notice(now);
         draw_hints(nullptr, "Green: online   CANCEL: back");
         break;
+    case screen::tools:
+        ui_drawn_tools = tools_state();
+        draw_title("Tools", title_color);
+        draw_menu_rows();
+        draw_menu_notice(now);
+        draw_hints(nullptr, "Red: test setting on  CANCEL: back");
+        break;
     case screen::mesh_list:
         draw_title("ESP-MESH", title_color);
         draw_menu_rows();
@@ -735,7 +838,7 @@ void draw_volume_page_value()
         width * ui_drawn_volume / audio_dsp::speaker_guard::max_volume);
     lcd.fillRect(20, 140, width, 16, outline_color);
     lcd.fillRect(20, 140, filled, 16, highlight_color);
-    draw_field(ui_drawn_muted ? "Muted (serial m)" : "", 20, 170, 1,
+    draw_field(ui_drawn_muted ? "Muted (OK: unmute)" : "", 20, 170, 1,
         talk_color, 200);
 }
 
@@ -744,7 +847,8 @@ void draw_volume_page()
     draw_title("Volume", title_color);
     draw_text("1..32", 8, 44, 1, muted_color);
     draw_volume_page_value();
-    draw_hints("UP/RIGHT: louder  DOWN/LEFT: quieter", "CANCEL: back");
+    draw_hints("UP/RIGHT: louder  DOWN/LEFT: quieter",
+        "OK: mute/unmute  CANCEL: back");
 }
 
 void draw_status_values()
@@ -792,7 +896,7 @@ void draw_status_values()
     }
     else if (mesh_switched_off)
     {
-        snprintf(line, sizeof(line), "Mesh off (serial: mesh on)");
+        snprintf(line, sizeof(line), "Mesh off (Tools: Rejoin mesh)");
     }
     else if (mesh == mesh_radio::state::connected && mesh_radio::is_root())
     {
@@ -880,6 +984,105 @@ void draw_status_page()
     draw_title("Status", title_color);
     draw_status_values();
     draw_hints(nullptr, "CANCEL: back");
+}
+
+// Routes page: where this board is in ESP-MESH (what serial `mesh` prints),
+// then the mesh route to each other board.
+
+// Orange through a middleman, green direct, grey while not known.
+uint16_t route_color(const char *route)
+{
+    return strstr(route, "via") ? highlight_color :
+        strstr(route, "direct") ? listen_color : muted_color;
+}
+
+void draw_routes_values(uint32_t now)
+{
+    char line[40];
+    int16_t y = 44;
+    const mesh_radio::state mesh = mesh_radio::current();
+    uint16_t color = listen_color;
+    if (mesh_switched_off)
+    {
+        snprintf(line, sizeof(line), "Mesh: off (Tools: Rejoin mesh)");
+        color = talk_color;
+    }
+    else if (mesh == mesh_radio::state::failed)
+    {
+        snprintf(line, sizeof(line), "Mesh: ERR at %s",
+            mesh_radio::failed_step());
+        color = talk_color;
+    }
+    else if (mesh == mesh_radio::state::connected && mesh_radio::is_root())
+    {
+        snprintf(line, sizeof(line), "Mesh: root, %d board%s",
+            mesh_radio::nodes(), mesh_radio::nodes() == 1 ? "" : "s");
+    }
+    else if (mesh == mesh_radio::state::connected)
+    {
+        snprintf(line, sizeof(line), "Mesh: layer %d, parent Board %u",
+            mesh_radio::layer(), mesh_radio::parent_board());
+    }
+    else
+    {
+        snprintf(line, sizeof(line), "Mesh: ");
+        mesh_looking_text(line + 6, sizeof(line) - 6, "");
+        color = muted_color;
+    }
+    draw_field(line, 8, y, 1, color, 224);
+    y += 14;
+    snprintf(line, sizeof(line), "Root: Board %u", mesh_radio::root_board());
+    draw_field(mesh_radio::root_board() ? line : "Root: not known", 8, y, 1,
+        ST77XX_WHITE, 224);
+    y += 14;
+    int used = snprintf(line, sizeof(line), "Children:");
+    const uint32_t children = mesh_radio::children_boards();
+    for (uint8_t id = 1; id <= max_id && used > 0 &&
+         used < static_cast<int>(sizeof(line)); ++id)
+    {
+        if (children & (1u << id))
+        {
+            used += snprintf(line + used, sizeof(line) - used, " Board %u",
+                id);
+        }
+    }
+    if (!children && used > 0 && used < static_cast<int>(sizeof(line)))
+    {
+        snprintf(line + used, sizeof(line) - used, " none");
+    }
+    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
+    y += 22;
+    draw_field("Mesh route to each board:", 8, y, 1, muted_color, 224);
+    y += 16;
+    for (uint8_t peer = 1; peer <= max_id && y <= 182; ++peer)
+    {
+        if (!valid_peer(peer))
+        {
+            continue;
+        }
+        char route[32];
+        if (mesh_ready() && mesh_peer_online(peer, now))
+        {
+            mesh_route_text(peer, now, route, sizeof(route));
+        }
+        else
+        {
+            snprintf(route, sizeof(route), "offline");
+        }
+        snprintf(line, sizeof(line), "%s: %s", device_name(peer), route);
+        draw_field(line, 8, y, 1, route_color(route), 224);
+        y += 14;
+    }
+    snprintf(line, sizeof(line), "ESP-NOW rate %u Mbps",
+        radio::rate_mbps());
+    draw_field(line, 8, 198, 1, muted_color, 224);
+}
+
+void draw_routes_page(uint32_t now)
+{
+    draw_title("Routes", title_color);
+    draw_routes_values(now);
+    draw_hints(nullptr, "Orange: via a middleman  CANCEL: back");
 }
 
 // Connecting and request
@@ -1026,8 +1229,7 @@ uint16_t route_line(uint32_t now, char *text, size_t capacity)
     char route[32];
     mesh_route_text(mesh_calls.peer(), now, route, sizeof(route));
     snprintf(text, capacity, "Route: %s", route);
-    return strstr(route, "via") ? highlight_color :
-        strstr(route, "direct") ? listen_color : muted_color;
+    return route_color(route);
 }
 
 void draw_route(uint32_t now)
@@ -1204,9 +1406,11 @@ const char *screen_name(screen value)
     case screen::espnow_list: return "espnow";
     case screen::mesh_list: return "mesh";
     case screen::lora_list: return "lora";
+    case screen::tools: return "tools";
     case screen::lora_connected: return "lora_connected";
     case screen::volume: return "volume";
     case screen::status: return "status";
+    case screen::routes: return "routes";
     case screen::connecting: return "connecting";
     case screen::request: return "request";
     case screen::connected: return "connected";
@@ -1228,10 +1432,12 @@ void show(screen next, uint32_t now)
     case screen::menu:
     case screen::espnow_list:
     case screen::mesh_list:
-    case screen::lora_list: draw_menu(next, now); break;
+    case screen::lora_list:
+    case screen::tools: draw_menu(next, now); break;
     case screen::lora_connected: draw_lora_connected(now); break;
     case screen::volume: draw_volume_page(); break;
     case screen::status: draw_status_page(); break;
+    case screen::routes: draw_routes_page(now); break;
     case screen::connecting: draw_connecting(now); break;
     case screen::request: draw_request(); break;
     case screen::connected: draw_connected(now); break;
@@ -1398,6 +1604,51 @@ void ptt_up_from_ui()
     }
 }
 
+// OK on a Tools row: switches its test setting, says so in the notice line,
+// and redraws the rows (a label or dot may change).
+void tool_activate(const menu_row &row, uint32_t now)
+{
+    switch (row.kind)
+    {
+    case row_kind::tool_rate:
+    {
+        const unsigned next = radio::rate_mbps() == 1 ? 6 : 1;
+        radio::configure(network_config::channel, next);
+        notice("Rate", next == 6 ? "6 Mbps" : "1 Mbps", now);
+        break;
+    }
+    case row_kind::tool_mesh_leave:
+        if (mesh_switched_off)
+        {
+            mesh_rejoin(now);
+            notice("Mesh", "rejoining", now);
+        }
+        else
+        {
+            mesh_leave();
+            notice("Mesh", "left", now);
+        }
+        break;
+    case row_kind::tool_mesh_root:
+        mesh_force_root(now);
+        notice("Mesh", "becoming root", now);
+        break;
+    case row_kind::tool_mute_mesh:
+        mesh_set_muted(!mesh_muted);
+        notice("Mesh", mesh_muted ? "muted" : "unmuted", now);
+        break;
+    case row_kind::tool_mute_lora:
+        lora_set_muted(!lora_muted);
+        notice("LoRa", lora_muted ? "muted" : "unmuted", now);
+        break;
+    default:
+        return;
+    }
+    ui_drawn_tools = tools_state();
+    draw_menu_rows();
+    draw_menu_notice(now);
+}
+
 void handle_press(button_id id, uint32_t now)
 {
     if (id == button_id::ptt)
@@ -1413,6 +1664,7 @@ void handle_press(button_id id, uint32_t now)
     case screen::espnow_list:
     case screen::mesh_list:
     case screen::lora_list:
+    case screen::tools:
         if (back || forward)
         {
             move_selection(back ? -1 : 1);
@@ -1431,6 +1683,15 @@ void handle_press(button_id id, uint32_t now)
             case row_kind::lora_page: page = screen::lora_list; break;
             case row_kind::volume: page = screen::volume; break;
             case row_kind::status: page = screen::status; break;
+            case row_kind::routes_page: page = screen::routes; break;
+            case row_kind::tools_page: page = screen::tools; break;
+            case row_kind::tool_rate:
+            case row_kind::tool_mesh_leave:
+            case row_kind::tool_mesh_root:
+            case row_kind::tool_mute_mesh:
+            case row_kind::tool_mute_lora:
+                tool_activate(row, now);
+                break;
             case row_kind::connect:
                 if (!place_call(row.peer, now))
                 {
@@ -1469,12 +1730,20 @@ void handle_press(button_id id, uint32_t now)
         {
             change_volume(-1);
         }
-        else if (id == button_id::cancel || id == button_id::confirm)
+        else if (id == button_id::confirm)
+        {
+            // Any new incoming stream unmutes by itself too.
+            speaker::set_muted(!speaker::muted());
+            Serial.printf("UI speaker %s\n", speaker::muted() ? "muted" :
+                "unmuted");
+        }
+        else if (id == button_id::cancel)
         {
             page = screen::menu;
         }
         break;
     case screen::status:
+    case screen::routes:
         if (id == button_id::cancel || id == button_id::confirm)
         {
             page = screen::menu;
@@ -1699,6 +1968,15 @@ void print_ui(uint32_t now)
             Serial.printf(" %s", ui_mesh_reachable[rows[selected].peer] ?
                 "(green)" : "(grey)");
         }
+        else if (rows[selected].kind >= row_kind::tool_rate)
+        {
+            uint16_t color = outline_color;
+            if (tool_dot(rows[selected], &color))
+            {
+                Serial.printf(" %s", color == talk_color ? "(red: on)" :
+                    color == listen_color ? "(green)" : "(off)");
+            }
+        }
         else if (rows[selected].kind == row_kind::lora_connect)
         {
             Serial.printf(" %s", ui_lora_reachable[rows[selected].peer] ?
@@ -1813,6 +2091,12 @@ void refresh(uint32_t now)
     case screen::espnow_list:
     case screen::mesh_list:
     case screen::lora_list:
+    case screen::tools:
+        if (shown == screen::tools && tools_state() != ui_drawn_tools)
+        {
+            ui_drawn_tools = tools_state();
+            draw_menu_rows();  // Changed from serial, or by the mesh.
+        }
         for (uint8_t i = 0; i < row_count; ++i)
         {
             const menu_row &row = rows[i];
@@ -1899,6 +2183,13 @@ void refresh(uint32_t now)
         {
             ui_drawn_second = now / 1000;
             draw_status_values();
+        }
+        break;
+    case screen::routes:
+        if (now / 1000 != ui_drawn_second)
+        {
+            ui_drawn_second = now / 1000;
+            draw_routes_values(now);
         }
         break;
     case screen::connecting:
@@ -2021,7 +2312,7 @@ void show_stopped(const char *reason)
         draw_text("This board's MAC:", 8, 80, 1, muted_color);
         draw_text(line, 8, 94, 2, highlight_color);
     }
-    draw_hints("See the serial log", "Serial: reboot");
+    draw_hints("Details in the serial log", "RESET button: restart");
 }
 
 void service_ui(uint32_t now)

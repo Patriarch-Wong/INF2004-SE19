@@ -27,6 +27,7 @@ std::atomic<uint32_t> dropped_unknown{0};
 std::atomic<uint32_t> ack_failures[network_config::device_count + 1];
 std::atomic<uint32_t> ack_ok_ms[network_config::device_count + 1];
 uint8_t own_mac[6] = {};
+unsigned current_rate = network_config::rate_mbps;
 
 bool zero_mac(const uint8_t *mac)
 {
@@ -291,7 +292,16 @@ const char *configure(unsigned channel, unsigned rate_mbps)
     esp_wifi_get_channel(&now_channel, &second);
     Serial.printf("RADIO channel %u rate %u %s\n", now_channel,
         error ? 0 : rate_mbps, error ? error : "ok");
+    if (!error)
+    {
+        current_rate = rate_mbps;
+    }
     return error;
+}
+
+unsigned rate_mbps()
+{
+    return current_rate;
 }
 
 esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size)
