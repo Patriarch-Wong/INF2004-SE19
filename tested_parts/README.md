@@ -28,6 +28,7 @@ README has the full procedure and measurements.
 | [mic_speaker_e2e_test2](mic_speaker_e2e_test2/) | `mic_speaker_e2e_test` with auto-unmute: mute is debug only, any new incoming stream unmutes the speaker |
 | [handset_integration_test](handset_integration_test/) | First handset integration: D-pad + LCD, connect to a pre-paired handset (request shown and authenticated), hold OK to talk (encrypted Opus over ESP-NOW), disconnect or link loss drops both sides |
 | [handset_lora_integration_test](handset_lora_integration_test/) | `handset_integration_test` plus LoRa connections (choose ESP-NOW or LoRa, choose a board, accept/decline) that send only "Hello from Board N" and "Bye from Board N", encrypted; one connection at a time |
+| [handset_espmesh_integration_test](handset_espmesh_integration_test/) | `handset_lora_integration_test` plus ESP-MESH connections with everything ESP-NOW has (accept/decline, push-to-talk voice, RIGHT hello), over ESP-WIFI-MESH with no router: board 1 is the preferred root and the next board up takes over if it is down; one connection at a time over any radio |
 | [shared_keys](shared_keys/) | One key file (network key + pair keys for boards 1–5) shared by `handset_integration_test` and both `mic_speaker_e2e_test` projects; generator and key finder |
 | [mictospeaker_test](mictospeaker_test/) | I2S microphone to ESP-NOW ADPCM to PDM speaker |
 | [lcd_lora_test](lcd_lora_test/) | ST7789 LCD and Core1121 LoRa on separate SPI buses, no menu: hello/bye texts both ways at 915 MHz, radio state, counts and RSSI on screen |

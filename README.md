@@ -46,6 +46,7 @@ INF2004-SE19/
     ├── shared_keys/          One key file (network + pair keys, boards 1–5) shared by projects
     ├── handset_integration_test/ D-pad + LCD connect/disconnect and encrypted push-to-talk voice
     ├── handset_lora_integration_test/ handset_integration_test plus LoRa connections sending hello/bye
+    ├── handset_espmesh_integration_test/ handset_lora_integration_test plus ESP-MESH (no router) voice connections
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
     └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
 ```
@@ -127,6 +128,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [mic_speaker_e2e_test2](tested_parts/mic_speaker_e2e_test2/) | Auto-unmute variant of `mic_speaker_e2e_test`; builds and host tests pass; not yet hardware-tested |
 | [handset_integration_test](tested_parts/handset_integration_test/) | D-pad + LCD: connect to a pre-paired handset, push-to-talk encrypted voice, disconnect or link loss drops both sides; builds and host tests (including connections) pass; not yet hardware-tested |
 | [handset_lora_integration_test](tested_parts/handset_lora_integration_test/) | handset_integration_test plus LoRa: Menu → LoRa → board, accept/decline, then UP sends "Hello from Board N" and DOWN "Bye from Board N", encrypted; radio starts in the background and never freezes the menu; hardware-tested on boards 1 and 2: connect, texts, decline/cancel/no answer, glare, busy, link loss, reboot (34/34 edge checks); ESP-NOW voice not re-run in this build |
+| [handset_espmesh_integration_test](tested_parts/handset_espmesh_integration_test/) | handset_lora_integration_test plus ESP-MESH: Menu → ESP-MESH → board, accept/decline, hold OK to talk, RIGHT hello, all encrypted, as over ESP-NOW; no router (board 1 is the preferred mesh root; if it is down the next board takes over); all five environments build; not yet hardware-tested (`tools/mesh_test.py` ready) |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 
