@@ -279,6 +279,10 @@ constexpr uint32_t mesh_task_stack = 4096;
 constexpr int mesh_core = 0;
 constexpr unsigned mesh_priority = 3;
 constexpr unsigned mesh_rx_queue_depth = 32;
+// Frames waiting for the mesh send task (mesh_radio.cpp), and how long it
+// waits for room in the mesh's own queue before dropping one.
+constexpr unsigned mesh_tx_queue_depth = 24;
+constexpr uint32_t mesh_send_wait_ms = 60;
 // Used only if this IDF refuses an empty router SSID: a router name that
 // does not exist, so the root still never joins anything.
 constexpr char mesh_placeholder_router[] = "SE19-NO-ROUTER";

@@ -62,6 +62,8 @@ the root and the others join it:
 | 0 (the best board) | 6 s (`mesh_root_wait_ms`) |
 | 1 | 14 s (+8 s per place, `mesh_root_wait_step_ms`) |
 | 2 | 22 s |
+| 3 | 30 s |
+| 4 (the last of five boards) | 38 s |
 
 The rank is worked out again every time the wait is checked, so it uses
 the latest scores, and a board that has just gone down drops out of the
@@ -113,8 +115,8 @@ Routes, Tools (9 rows; it scrolls).
 | Screen | Changed |
 | --- | --- |
 | Menu | No Flood mesh or Routed relay rows |
-| Status | The old flood/routed line now shows this board's score: `Root: idle, hears 2, rank 0` |
-| Routes | Each board's route over ESP-MESH only (`Mesh 1 > 3 > 2, via Board 3`), then the same `Root: …` line |
+| Status | The old flood/routed line now shows this board's score: `Root: idle, hears 2, rank 0`. The page scrolls: **UP/DOWN** move half a page (scroll bar on the right, hint `UP/DOWN: more lines`), so every board's line fits with five boards. LoRa keys and the LoRa counts are on separate lines; the rate is the current one (Tools → Rate changes it) |
+| Routes | Each board's route over ESP-MESH only (`Mesh 1 > 3 > 2, via Board 3`), then the same `Root: …` line. Children are listed by ID (`Mesh children: 2 3 4 5`) so four fit; all four other boards' routes fit without scrolling |
 | Tools | `Rate`, `Leave mesh` / `Rejoin mesh`, `Be mesh root`, `Mute mesh`, `Mute LoRa`. The `Block Board N`, `Mute flood` and `Mute routed` rows are gone |
 
 Every other screen is as in
@@ -123,7 +125,10 @@ Every other screen is as in
 ## Step-by-step: use and test
 
 Boards 1 and 2 with the handset wiring, board 3 for the election and
-middleman tests (no speaker needed). Wiring is unchanged
+middleman tests (no speaker needed). Boards 4 and 5 are optional: every
+menu, list and page includes them (ESP-NOW, ESP-MESH and LoRa lists,
+Broadcast `Heard by`, Status, Routes), and a board that is off just shows
+as offline. Wiring is unchanged
 ([handset_lora_integration_test](../handset_lora_integration_test/README.md#wiring)).
 
 ### 1. Flash all boards with this build
@@ -137,13 +142,20 @@ monitors first.
 | `5B5F021600` | Board 1 | COM11 |
 | `5B5F021597` | Board 2 | COM4 |
 | `5B5F021589` | Board 3 (MAC `E0:72:A1:D9:A4:94`) | COM10 |
+| `5B42019238` | Board 4 (MAC `E0:72:A1:D8:0E:48`) | COM15 |
+| not seen yet | Board 5 (MAC `E0:72:A1:D5:64:0C`, board 1 of the e2e tests) | check `pio device list` |
 
 ```powershell
 cd tested_parts\handset_espmesh_autoroot_integration_test
 ~\.platformio\penv\Scripts\pio.exe run -e board1 -t upload --upload-port COM11
 ~\.platformio\penv\Scripts\pio.exe run -e board2 -t upload --upload-port COM4
 ~\.platformio\penv\Scripts\pio.exe run -e board3 -t upload --upload-port COM10
+~\.platformio\penv\Scripts\pio.exe run -e board4 -t upload --upload-port COM15
+~\.platformio\penv\Scripts\pio.exe run -e board5 -t upload --upload-port COMx
 ```
+
+Flashing a board with the wrong `boardN` environment stops it at boot with
+`Wrong boardN environment for this board` (its MAC is on screen).
 
 **Flash every board from this folder.** A board on an older build sends no
 score, so the others rank it by ID alone, and it still uses the fixed order
@@ -152,12 +164,14 @@ itself.
 ### 2. Check the election
 
 1. Reset all boards at about the same time.
-2. On each board: Menu → **Status**. Within a few seconds the score line
-   reads `Root: idle, hears 2, rank N`. Exactly one board should show
-   **rank 0**: board 1 when all three are in range of each other (tie,
+2. On each board: Menu → **Status**, then **DOWN** to the score line. Within
+   a few seconds it reads `Root: idle, hears N, rank R` (`hears 2` with
+   three boards in range, `hears 4` with five). Exactly one board should
+   show **rank 0**: board 1 when all are in range of each other (tie,
    lowest ID).
 3. About 6 s after boot, Menu → **Routes** on that board: `Mesh: root, 3
-   boards`. The others show `Mesh: layer 2, parent Board 1`.
+   boards` (`5 boards` with all five). The others show `Mesh: layer 2,
+   parent Board 1`.
 
 ### 3. Tests on the boards
 
@@ -213,6 +227,7 @@ Log lines:
 | Two boards both show `rank 0` | They can't hear each other over ESP-NOW (check the ESP-NOW list's dots), or one is on an older build. A root nobody joins steps down within 30–45 s |
 | The root isn't the board you expected | Check `hears` on Status: the board that hears the most idle boards wins; ties go to the lowest ID. A working root never moves, so reset all boards to elect again |
 | `no score yet (ID order)` stays for a board | That board isn't on this build |
+| Voice over ESP-MESH breaks up | Serial `mesh`: `send queue full N, slowest send M ms`. Sends run in their own task (the loop never waits on the mesh) and every other frame carries the one before it, as in the broadcast build; queue full above 0 means the route can't keep up |
 | Anything else | See [handset_espmesh_integration_test](../handset_espmesh_integration_test/README.md#troubleshooting) and [handset_broadcast_integration_test](../handset_broadcast_integration_test/README.md#troubleshooting) |
 
 ## What changed from handset_broadcast_integration_test
@@ -237,5 +252,8 @@ Log lines:
   `mesh elect`, the score line for the screens. The two-way helpers
   (`peer_via()`, `send_control_via()`, `route_text_via()`, `gone_reason()`)
   are back here from `relay.inc`.
-- `include/network_config.h`: `mesh_root_id` removed.
+- `include/network_config.h`: `mesh_root_id` removed; boards 4 and 5 have
+  their MACs, so every board lists them.
+- `src/ui.inc`: the Status page scrolls (UP/DOWN) so five boards fit;
+  Routes lists mesh children by ID.
 - `tools/mesh_test.py`: the `elect` test; board 1 is root by the tie-break.

@@ -31,8 +31,6 @@
 // (peer_state), how sends to it are going, and where it hangs.
 struct mesh_peer : peer_state
 {
-    uint32_t send_failures = 0;     // In a row; a send that works resets.
-    uint32_t last_send_ok_ms = 0;
     // Where the board hangs in the mesh, from its last presence ping: its
     // parent (0 for the root) and layer. For the route on screen.
     bool placed = false;
@@ -67,8 +65,8 @@ bool mesh_can_send(uint8_t peer)
 // (acks_lost).
 bool mesh_sends_failing(uint8_t peer, uint32_t now)
 {
-    const mesh_peer &state = mesh_peers[peer];
-    return sends_failing(state.send_failures, state.last_send_ok_ms, now);
+    const mesh_radio::send_record sends = mesh_radio::sends_to(peer);
+    return sends_failing(sends.failures, sends.last_ok_ms, now);
 }
 
 // A mesh session is up, something from the board opened recently, and
@@ -237,7 +235,8 @@ void mesh_reject(const mesh_radio::received_frame &frame, const char *reason)
     log_reject("MESH ", mesh_rejected, frame.mac, frame.size, reason);
 }
 
-// Every mesh frame goes out here: mute, and the run of failures per peer.
+// Every mesh frame goes out here: mute. The send task keeps each peer's
+// run of failures (mesh_radio::sends_to()).
 esp_err_t mesh_transmit(uint8_t peer, const uint8_t *frame, size_t size)
 {
     if (mesh_muted)
@@ -245,19 +244,7 @@ esp_err_t mesh_transmit(uint8_t peer, const uint8_t *frame, size_t size)
         ++mesh_muted_tx;
         return ESP_OK;  // Gone, as out of range: presence and timeouts notice.
     }
-    const esp_err_t result = mesh_radio::send(radio::find_device(peer)->mac,
-        frame, size);
-    mesh_peer &state = mesh_peers[peer];
-    if (result == ESP_OK)
-    {
-        state.send_failures = 0;
-        state.last_send_ok_ms = millis();
-    }
-    else if (!mesh_radio::busy(result))
-    {
-        ++state.send_failures;
-    }
-    return result;
+    return mesh_radio::send(radio::find_device(peer)->mac, frame, size);
 }
 
 void mesh_send_control(uint8_t destination,
@@ -892,7 +879,8 @@ void print_mesh()
     }
     Serial.printf(" | sent %lu failed %lu | received %lu dropped %lu unknown "
                   "%lu | accepted %lu rejected %lu | parent joins %lu losses "
-                  "%lu | router misses %lu | restarts %lu%s",
+                  "%lu | router misses %lu | restarts %lu | send queue "
+                  "full %lu, slowest send %lu ms%s",
         static_cast<unsigned long>(c.sent),
         static_cast<unsigned long>(c.send_failed),
         static_cast<unsigned long>(c.received),
@@ -904,6 +892,8 @@ void print_mesh()
         static_cast<unsigned long>(c.parent_losses),
         static_cast<unsigned long>(c.router_misses),
         static_cast<unsigned long>(c.restarts),
+        static_cast<unsigned long>(c.queue_full),
+        static_cast<unsigned long>(c.slowest_send_us / 1000),
         mesh_muted ? " | MUTED" : "");
     Serial.print(" | sessions");
     print_sessions(via::mesh, now);
