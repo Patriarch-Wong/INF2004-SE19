@@ -39,7 +39,6 @@ uint32_t lora_rejected = 0;
 lora_radio::state lora_shown_state = lora_radio::state::off;
 int16_t lora_shown_error = 0;
 
-call::machine lora_calls;
 call::state lora_shown_call = call::state::idle;
 uint32_t lora_shown_ends = 0;
 uint32_t lora_call_send_drops = 0;
@@ -87,16 +86,6 @@ const char *lora_delivery_name(lora_delivery value)
     case lora_delivery::failed: return "not delivered";
     }
     return "?";
-}
-
-bool lora_in_use()
-{
-    return lora_calls.current() != call::state::idle;
-}
-
-call::machine &lora_machine()
-{
-    return lora_calls;
 }
 
 bool lora_ready()
@@ -696,11 +685,7 @@ bool place_lora_call(uint8_t peer, uint32_t now)
         }
         return false;
     }
-    uint32_t id = 0;
-    do
-    {
-        id = esp_random();
-    } while (id == 0);
+    const uint32_t id = random_id();
     lora_calls.set_unavailable(false);
     if (!lora_calls.dial(peer, id, now))
     {
@@ -812,15 +797,7 @@ void service_lora_calls(uint32_t now)
     send_lora_call_messages();
     report_lora_call(now);
     service_lora_text(now);
-    // Beep while a LoRa request waits for this user.
-    if (lora_calls.current() == call::state::ringing &&
-        app_config::ring_tone_ms > 0 && !speaker::testing() &&
-        rx_play_at_us.load() == 0 &&
-        now - last_ring_ms >= app_config::ring_tone_period_ms)
-    {
-        last_ring_ms = now;
-        speaker::tone(app_config::ring_tone_hz, app_config::ring_tone_ms);
-    }
+    ring_while_asked(lora_calls, now);
 }
 
 // Radio state
@@ -1055,33 +1032,5 @@ bool run_lora_command(const char *line, uint32_t now)
         }
         return true;
     }
-    if (!lora_in_use())
-    {
-        return false;
-    }
-    if (strcmp(line, "accept") == 0)
-    {
-        if (!lora_calls.answer(now))
-        {
-            Serial.println("LORA LINK no request to accept");
-        }
-        return true;
-    }
-    if (strcmp(line, "decline") == 0)
-    {
-        if (!lora_calls.decline(now))
-        {
-            Serial.println("LORA LINK no request to decline");
-        }
-        return true;
-    }
-    if (strcmp(line, "disconnect") == 0)
-    {
-        if (!lora_calls.hang_up(now))
-        {
-            Serial.println("LORA LINK not connected");
-        }
-        return true;
-    }
-    return false;
+    return lora_in_use() && run_link_command(lora_calls, "LORA ", line, now);
 }

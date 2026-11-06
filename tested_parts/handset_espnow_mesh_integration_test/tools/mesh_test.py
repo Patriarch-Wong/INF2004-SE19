@@ -18,26 +18,9 @@ Port 1 must be board 1 (the root). TEST names are the keys of TESTS below
 import sys
 import time
 
-# The same serial helper as the LoRa edge tests (tools/lora_edge_test.py).
-from lora_edge_test import EVIDENCE, Board
+from two_board_test import check, finish, open_boards, ui_line, voice
 
-results = []
 B1 = B2 = None
-BOARDS = ()
-
-
-def check(ok, what):
-    results.append((ok, what))
-    print(f"  {'PASS' if ok else 'FAIL'}  {what}", flush=True)
-    for board in BOARDS:
-        board.note(f"{'PASS' if ok else 'FAIL'} {what}")
-    return ok
-
-
-def ui_line(board, pattern, timeout=2.0):
-    since = board.mark()
-    board.send("ui")
-    return board.wait(r"UI \| screen " + pattern, timeout, since)
 
 
 def mesh_connect(a, b, a_id, b_id):
@@ -64,18 +47,6 @@ def wait_idle(*boards):
             if ui_line(board, r"(menu|espnow|mesh|lora|volume|status)\b"):
                 break
             time.sleep(0.7)
-
-
-def voice(sender, receiver, seconds, via):
-    """Sends a test-signal stream and checks the receiver played it all."""
-    s_tx, s_rx = sender.mark(), receiver.mark()
-    sender.send(f"test {seconds}")
-    started = sender.wait(rf"TX_START .* via={via}", 3, s_tx)
-    heard = receiver.wait(rf"RX_START .* via={via}", 5, s_rx)
-    ended = receiver.wait(r"RX_END .* intact=(\w+)", seconds + 10, s_rx)
-    sender.wait(r"TX_END", 5, s_tx)
-    time.sleep(2.0)  # The sender lingers 1.5 s answering NACKs.
-    return bool(started and heard and ended and ended.group(1) == "yes")
 
 
 def to_mesh_list(board, peer):
@@ -367,25 +338,8 @@ TESTS = {
 
 
 def main():
-    global B1, B2, BOARDS
-    if len(sys.argv) < 4:
-        sys.exit(__doc__)
-    run, port1, port2 = sys.argv[1:4]
-    names = sys.argv[4:] or list(TESTS)
-    unknown = [name for name in names if name not in TESTS]
-    if unknown:
-        sys.exit(f"unknown test {', '.join(unknown)}; choose from "
-                 f"{' '.join(TESTS)}")
-    EVIDENCE.mkdir(exist_ok=True)
-    start = time.monotonic()
-    B1 = Board("board1", port1, EVIDENCE / f"{run}_board1.txt", start)
-    B2 = Board("board2", port2, EVIDENCE / f"{run}_board2.txt", start)
-    BOARDS = (B1, B2)
-    # Opening a port doesn't reset the board on every OS: reboot both, so
-    # each log starts at boot. Board 1 first, as at power-on.
-    B1.send("reboot")
-    time.sleep(2)
-    B2.send("reboot")
+    global B1, B2
+    B1, B2, names = open_boards(__doc__, TESTS, list(TESTS))
     try:
         if names[0] != "join":
             B1.wait(r"MESH PEER 2 \(Board 2\) online", 90, 0)
@@ -393,11 +347,8 @@ def main():
         for name in names:
             TESTS[name]()
     finally:
-        passed = sum(1 for ok, _ in results if ok)
-        print(f"{passed}/{len(results)} checks passed")
-        for board in BOARDS:
-            board.close()
-    return 0 if results and passed == len(results) else 1
+        code = finish()
+    return code
 
 
 if __name__ == "__main__":

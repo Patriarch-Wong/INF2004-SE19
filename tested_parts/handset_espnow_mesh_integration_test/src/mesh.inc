@@ -51,12 +51,6 @@ uint32_t mesh_accepted = 0;
 uint32_t mesh_rejected = 0;
 mesh_radio::state mesh_shown_state = mesh_radio::state::off;
 
-call::state mesh_shown_call = call::state::idle;
-uint32_t mesh_shown_ends = 0;
-uint32_t mesh_call_send_drops = 0;
-uint32_t mesh_call_session = 0;
-uint32_t mesh_call_session_for = 0;
-
 // Serial `mesh mute on|off`: drops every mesh frame sent and received, as
 // out of range would (the mesh itself stays up), for link-loss tests.
 bool mesh_muted = false;
@@ -519,56 +513,21 @@ void handle_mesh(const mesh_radio::received_frame &frame, uint32_t now)
     }
     ++mesh_accepted;
     state.last_accept_ms = now;
-    if (opened.type == secure_message::type_text)
+    // Over the mesh a presence ping also says where the board hangs:
+    // parent (0 for the root), then layer.
+    if (opened.type == secure_message::type_voice && size >= 3 &&
+        voice_link::kind(payload, size) == kind_presence)
     {
-        on_text(via::mesh, fields.source, payload, size);
-        return;
+        state.placed = true;
+        state.parent = payload[1];
+        state.layer = payload[2];
+        state.placed_ms = now;
     }
-    if (opened.type != secure_message::type_voice)
+    const char *problem = take_payload(via::mesh, fields.source, opened.type,
+        payload, size, arrival, now);
+    if (problem)
     {
-        return;
-    }
-    if (voice_link::kind(payload, size) == call::kind_call)
-    {
-        call::message content = {};
-        if (call::parse(payload, size, &content))
-        {
-            // Busy over another radio: a new mesh request is answered busy.
-            mesh_calls.set_unavailable(busy_elsewhere(mesh_calls));
-            mesh_calls.receive(fields.source, content, now);
-        }
-        else
-        {
-            mesh_reject(frame, "bad connection payload");
-        }
-        return;
-    }
-    mesh_calls.heard_from(fields.source, now);
-    switch (voice_link::kind(payload, size))
-    {
-    case voice_link::kind_voice:
-        on_voice(via::mesh, fields.source, payload, size, arrival, now);
-        break;
-    case voice_link::kind_nack:
-        on_nack(via::mesh, fields.source, payload, size);
-        break;
-    case voice_link::kind_end:
-        on_end(via::mesh, fields.source, payload, size);
-        break;
-    case kind_presence:
-        // Opening it updated last_accept_ms. Over the mesh it also says
-        // where the board hangs: parent (0 for the root), then layer.
-        if (size >= 3)
-        {
-            state.placed = true;
-            state.parent = payload[1];
-            state.layer = payload[2];
-            state.placed_ms = now;
-        }
-        break;
-    default:
-        mesh_reject(frame, "unknown voice payload");
-        break;
+        mesh_reject(frame, problem);
     }
 }
 
@@ -613,11 +572,7 @@ bool place_mesh_call(uint8_t peer, uint32_t now)
             "no mesh session");
         return false;
     }
-    uint32_t id = 0;
-    do
-    {
-        id = esp_random();
-    } while (id == 0);
+    const uint32_t id = random_id();
     mesh_calls.set_unavailable(false);
     if (!mesh_calls.dial(peer, id, now))
     {
@@ -626,68 +581,6 @@ bool place_mesh_call(uint8_t peer, uint32_t now)
         return false;
     }
     return true;
-}
-
-void send_mesh_call_messages()
-{
-    call::outgoing item = {};
-    while (mesh_calls.next_outgoing(&item))
-    {
-        uint8_t payload[call::message_size];
-        size_t size = 0;
-        if (!mesh_can_send(item.peer) ||
-            !call::build(item.content, payload, sizeof(payload), &size) ||
-            mesh_send_payload(item.peer, payload, size,
-                secure_message::type_voice) != ESP_OK)
-        {
-            ++mesh_call_send_drops;  // Resends and timeouts recover.
-        }
-    }
-}
-
-// Logs each change of mesh connection state.
-void report_mesh_call(uint32_t now)
-{
-    if (mesh_calls.end_count() != mesh_shown_ends)
-    {
-        mesh_shown_ends = mesh_calls.end_count();
-        Serial.printf("MESH LINK disconnected from %u (%s) | %s\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            call::end_reason_name(mesh_calls.last_end()));
-    }
-    const call::state current = mesh_calls.current();
-    if (current == mesh_shown_call)
-    {
-        return;
-    }
-    mesh_shown_call = current;
-    switch (current)
-    {
-    case call::state::calling:
-        Serial.printf("MESH LINK connecting to %u (%s) | id %08lX\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            static_cast<unsigned long>(mesh_calls.call_id()));
-        break;
-    case call::state::ringing:
-        Serial.printf("MESH LINK request | %u (%s) wants to connect over "
-                      "ESP-MESH | id %08lX | accept or decline\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            static_cast<unsigned long>(mesh_calls.call_id()));
-        last_ring_ms = now - app_config::ring_tone_period_ms;
-        break;
-    case call::state::connected:
-        peer_id = mesh_calls.peer();
-        drop_old_streams(mesh_calls);
-        Serial.printf("MESH LINK connected to %u (%s) | id %08lX | session "
-                      "%08lX\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            static_cast<unsigned long>(mesh_calls.call_id()),
-            static_cast<unsigned long>(
-                mesh_peers[mesh_calls.peer()].link.session_id()));
-        break;
-    case call::state::idle:
-        break;
-    }
 }
 
 // Where this board hung when it last pinged, so a move pings at once.
@@ -729,87 +622,6 @@ void service_mesh_presence(uint32_t now)
             Serial.printf("MESH PEER %u (%s) %s\n", peer, device_name(peer),
                 online ? "online" : "offline");
         }
-    }
-}
-
-// Ends the mesh connection if its board is gone (pings stopped, or sends
-// to it keep failing) or made a new mesh session, which means it
-// rebooted.
-void check_mesh_call_peer(uint32_t now)
-{
-    if (mesh_calls.current() == call::state::idle)
-    {
-        mesh_call_session = mesh_call_session_for = 0;
-        return;
-    }
-    const uint8_t peer = mesh_calls.peer();
-    const uint32_t session = mesh_peers[peer].link.session_id();
-    if (mesh_calls.call_id() != mesh_call_session_for)
-    {
-        mesh_call_session_for = mesh_calls.call_id();
-        mesh_call_session = session;
-    }
-    const bool rebooted = session != mesh_call_session;
-    if (!rebooted && mesh_peer_online(peer, now))
-    {
-        return;
-    }
-    Serial.printf("MESH LINK %u (%s) %s: ending %s\n", peer,
-        device_name(peer),
-        rebooted ? "made a new session (rebooted)" :
-        !mesh_ready() ? "can't be reached: this board left the mesh" :
-        mesh_sends_failing(peer, now) ? "can't be reached (sends failing)" :
-            "went offline",
-        call::state_name(mesh_calls.current()));
-    mesh_calls.lost(now);
-    mesh_call_session = mesh_call_session_for = 0;
-}
-
-// Logs the route of the mesh connection when it is first known and each
-// time it changes (a middleman came or went).
-char mesh_logged_route[40] = {};
-uint32_t mesh_route_checked_ms = 0;
-
-void report_mesh_route(uint32_t now)
-{
-    if (mesh_calls.current() != call::state::connected)
-    {
-        mesh_logged_route[0] = '\0';
-        return;
-    }
-    if (now - mesh_route_checked_ms < 1000)
-    {
-        return;
-    }
-    mesh_route_checked_ms = now;
-    char route[sizeof(mesh_logged_route)];
-    mesh_route_text(mesh_calls.peer(), now, route, sizeof(route));
-    if (strcmp(route, "finding...") == 0 ||
-        strcmp(route, mesh_logged_route) == 0)
-    {
-        return;
-    }
-    memcpy(mesh_logged_route, route, sizeof(route));
-    Serial.printf("MESH ROUTE to %u (%s): %s\n", mesh_calls.peer(),
-        device_name(mesh_calls.peer()), route);
-}
-
-void service_mesh_calls(uint32_t now)
-{
-    mesh_calls.set_unavailable(busy_elsewhere(mesh_calls));
-    check_mesh_call_peer(now);
-    mesh_calls.tick(now);
-    send_mesh_call_messages();
-    report_mesh_call(now);
-    report_mesh_route(now);
-    // Beep while a mesh request waits for this user.
-    if (mesh_calls.current() == call::state::ringing &&
-        app_config::ring_tone_ms > 0 && !speaker::testing() &&
-        rx_play_at_us.load() == 0 &&
-        now - last_ring_ms >= app_config::ring_tone_period_ms)
-    {
-        last_ring_ms = now;
-        speaker::tone(app_config::ring_tone_hz, app_config::ring_tone_ms);
     }
 }
 
@@ -1156,31 +968,7 @@ void print_mesh()
         static_cast<unsigned long>(c.restarts),
         mesh_muted ? " | MUTED" : "");
     Serial.print(" | sessions");
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        if (!valid_peer(peer))
-        {
-            continue;
-        }
-        const mesh_peer &state = mesh_peers[peer];
-        if (state.link.established() && mesh_peer_online(peer, now))
-        {
-            char route[40];
-            mesh_route_text(peer, now, route, sizeof(route));
-            Serial.printf(" %u=%08lX (route %s)", peer,
-                static_cast<unsigned long>(state.link.session_id()), route);
-        }
-        else if (state.link.established())
-        {
-            Serial.printf(" %u=%08lX(offline)", peer,
-                static_cast<unsigned long>(state.link.session_id()));
-        }
-        else
-        {
-            Serial.printf(" %u=%s", peer, state.link.paired() ? "waiting" :
-                "no key");
-        }
-    }
+    print_sessions(via::mesh, now);
     Serial.println();
 }
 
@@ -1277,7 +1065,7 @@ void service_mesh(uint32_t now)
         service_mesh_sessions(now);
     }
     service_mesh_presence(now);
-    service_mesh_calls(now);
+    service_calls(via::mesh, now);
 }
 
 // Test settings, from the Tools page (ui.inc) or serial: link loss, and a
@@ -1366,33 +1154,5 @@ bool run_mesh_command(const char *line, uint32_t now)
         }
         return true;
     }
-    if (!mesh_in_use())
-    {
-        return false;
-    }
-    if (strcmp(line, "accept") == 0)
-    {
-        if (!mesh_calls.answer(now))
-        {
-            Serial.println("MESH LINK no request to accept");
-        }
-        return true;
-    }
-    if (strcmp(line, "decline") == 0)
-    {
-        if (!mesh_calls.decline(now))
-        {
-            Serial.println("MESH LINK no request to decline");
-        }
-        return true;
-    }
-    if (strcmp(line, "disconnect") == 0)
-    {
-        if (!mesh_calls.hang_up(now))
-        {
-            Serial.println("MESH LINK not connected");
-        }
-        return true;
-    }
-    return false;
+    return mesh_in_use() && run_link_command(mesh_calls, "MESH ", line, now);
 }

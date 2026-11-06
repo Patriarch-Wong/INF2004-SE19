@@ -30,7 +30,6 @@ uint8_t own_board = 0;
 
 std::atomic<uint8_t> status{static_cast<uint8_t>(state::off)};
 std::atomic<bool> broken{false};  // The last start or restart failed.
-std::atomic<uint32_t> status_ms{0};
 std::atomic<bool> root_role{false};
 std::atomic<bool> rootless_now{false};
 std::atomic<uint8_t> root_id{0};
@@ -54,12 +53,10 @@ std::atomic<uint32_t> parent_joins{0};
 std::atomic<uint32_t> parent_losses{0};
 std::atomic<uint32_t> router_misses{0};
 std::atomic<uint32_t> restarts{0};
-std::atomic<uint32_t> note_drops{0};
 
 void set_state(state value)
 {
     status.store(static_cast<uint8_t>(value));
-    status_ms.store(millis());
 }
 
 void post(note_kind kind, int value = 0, const uint8_t *mac = nullptr)
@@ -71,9 +68,9 @@ void post(note_kind kind, int value = 0, const uint8_t *mac = nullptr)
     {
         memcpy(item.mac, mac, 6);
     }
-    if (!note_queue || xQueueSend(note_queue, &item, 0) != pdTRUE)
+    if (note_queue)
     {
-        note_drops.fetch_add(1);
+        xQueueSend(note_queue, &item, 0);  // Full: the note is lost.
     }
 }
 
@@ -532,11 +529,6 @@ state current()
         static_cast<state>(status.load());
 }
 
-uint32_t state_since_ms()
-{
-    return status_ms.load();
-}
-
 const char *state_name(state value)
 {
     switch (value)
@@ -682,6 +674,6 @@ counters stats()
 {
     return {sent.load(), send_failed.load(), received.load(), rx_drops.load(),
         unknown_drops.load(), parent_joins.load(), parent_losses.load(),
-        router_misses.load(), restarts.load(), note_drops.load()};
+        router_misses.load(), restarts.load()};
 }
 }

@@ -87,20 +87,13 @@ struct relay_net
     uint32_t no_route = 0;    // Routed: nowhere to send it.
     uint32_t send_errors = 0;
     uint32_t requests = 0;    // Routed: route requests this board sent.
-    // Connections.
-    call::state shown_call = call::state::idle;
-    uint32_t shown_ends = 0;
-    uint32_t call_send_drops = 0;
-    uint32_t call_session = 0;
-    uint32_t call_session_for = 0;
-    char logged_route[40] = {};
-    uint32_t route_checked_ms = 0;
 };
 
 relay_net flood_net("FLOOD", via::flood, relay_frame::marker_flood,
     flood_calls);
 relay_net routed_net("ROUTED", via::routed, relay_frame::marker_routed,
     routed_calls);
+relay_net *const relay_nets[] = {&flood_net, &routed_net};
 
 // Route requests seen, by (origin, request ID): each is relayed once.
 relay_frame::seen_cache routed_requests;
@@ -115,11 +108,6 @@ relay_net &relay_of(via link)
     return link == via::routed ? routed_net : flood_net;
 }
 
-const char *relay_label(const relay_net &net)
-{
-    return &net == &routed_net ? "routed relay" : "flood mesh";
-}
-
 uint8_t relay_board_of(const uint8_t *mac)
 {
     const network_config::device *entry = radio::find_device(mac);
@@ -129,11 +117,6 @@ uint8_t relay_board_of(const uint8_t *mac)
 bool relay_is_blocked(uint8_t board)
 {
     return board > 0 && board < 32 && (relay_blocked & (1u << board)) != 0;
-}
-
-bool relay_can_send(via link, uint8_t peer)
-{
-    return relay_of(link).peers[peer].link.established();
 }
 
 // A session is up and something from the board opened recently. Broadcast
@@ -803,47 +786,11 @@ void relay_deliver(relay_net &net, const radio::received_frame &frame,
     memcpy(state.heard_path, head.path, head.path_length);
     state.heard_length = head.path_length;
     state.heard_ms = now;
-    if (opened.type == secure_message::type_text)
+    const char *problem = take_payload(net.link, fields.source, opened.type,
+        payload, size, arrival, now);
+    if (problem)
     {
-        on_text(net.link, fields.source, payload, size);
-        return;
-    }
-    if (opened.type != secure_message::type_voice)
-    {
-        return;
-    }
-    if (voice_link::kind(payload, size) == call::kind_call)
-    {
-        call::message content = {};
-        if (call::parse(payload, size, &content))
-        {
-            // Busy over another radio: a new request is answered busy.
-            net.calls.set_unavailable(busy_elsewhere(net.calls));
-            net.calls.receive(fields.source, content, now);
-        }
-        else
-        {
-            relay_reject(net, frame, "bad connection payload");
-        }
-        return;
-    }
-    net.calls.heard_from(fields.source, now);
-    switch (voice_link::kind(payload, size))
-    {
-    case voice_link::kind_voice:
-        on_voice(net.link, fields.source, payload, size, arrival, now);
-        break;
-    case voice_link::kind_nack:
-        on_nack(net.link, fields.source, payload, size);
-        break;
-    case voice_link::kind_end:
-        on_end(net.link, fields.source, payload, size);
-        break;
-    case kind_presence:
-        break;  // Opening it was the point: last_accept_ms is updated.
-    default:
-        relay_reject(net, frame, "unknown voice payload");
-        break;
+        relay_reject(net, frame, problem);
     }
 }
 
@@ -996,6 +943,52 @@ void relay_route_text(via link, uint8_t peer, uint32_t now, char *text,
     path_text(path, length, text, capacity);
 }
 
+// Every Wi-Fi way (declared in handset.inc; here, after the last way)
+
+const session::link &session_via(via link, uint8_t peer)
+{
+    switch (link)
+    {
+    case via::mesh: return mesh_peers[peer].link;
+    case via::flood:
+    case via::routed: return relay_of(link).peers[peer].link;
+    case via::espnow: break;
+    }
+    return peers[peer].link;
+}
+
+void route_text_via(via link, uint8_t peer, uint32_t now, char *text,
+    size_t capacity)
+{
+    if (link == via::mesh)
+    {
+        mesh_route_text(peer, now, text, capacity);
+    }
+    else
+    {
+        relay_route_text(link, peer, now, text, capacity);
+    }
+}
+
+// Why `peer` looks gone over `link` (it didn't reboot): for the log line
+// that ends the connection.
+const char *gone_reason(via link, uint8_t peer, uint32_t now)
+{
+    switch (link)
+    {
+    case via::espnow:
+        return acks_lost(peer, now) ? "stopped acknowledging (radio)" :
+            "went offline";
+    case via::mesh:
+        return !mesh_ready() ? "can't be reached: this board left the mesh" :
+            mesh_sends_failing(peer, now) ? "can't be reached (sends failing)" :
+            "went offline";
+    case via::flood:
+    case via::routed: break;
+    }
+    return "went offline";
+}
+
 // Connections
 
 bool place_relay_call(relay_net &net, uint8_t peer, uint32_t now)
@@ -1019,11 +1012,7 @@ bool place_relay_call(relay_net &net, uint8_t peer, uint32_t now)
                 "no presence ping for a while" : "no session");
         return false;
     }
-    uint32_t id = 0;
-    do
-    {
-        id = esp_random();
-    } while (id == 0);
+    const uint32_t id = random_id();
     net.calls.set_unavailable(false);
     if (!net.calls.dial(peer, id, now))
     {
@@ -1032,90 +1021,6 @@ bool place_relay_call(relay_net &net, uint8_t peer, uint32_t now)
         return false;
     }
     return true;
-}
-
-void send_relay_call_messages(relay_net &net)
-{
-    call::outgoing item = {};
-    while (net.calls.next_outgoing(&item))
-    {
-        uint8_t payload[call::message_size];
-        size_t size = 0;
-        if (!net.peers[item.peer].link.established() ||
-            !call::build(item.content, payload, sizeof(payload), &size) ||
-            relay_send_payload(net.link, item.peer, payload, size,
-                secure_message::type_voice) != ESP_OK)
-        {
-            ++net.call_send_drops;  // Resends and timeouts recover.
-        }
-    }
-}
-
-void report_relay_call(relay_net &net, uint32_t now)
-{
-    call::machine &machine = net.calls;
-    if (machine.end_count() != net.shown_ends)
-    {
-        net.shown_ends = machine.end_count();
-        Serial.printf("%s LINK disconnected from %u (%s) | %s\n", net.tag,
-            machine.peer(), device_name(machine.peer()),
-            call::end_reason_name(machine.last_end()));
-    }
-    const call::state current = machine.current();
-    if (current == net.shown_call)
-    {
-        return;
-    }
-    net.shown_call = current;
-    switch (current)
-    {
-    case call::state::calling:
-        Serial.printf("%s LINK connecting to %u (%s) | id %08lX\n", net.tag,
-            machine.peer(), device_name(machine.peer()),
-            static_cast<unsigned long>(machine.call_id()));
-        break;
-    case call::state::ringing:
-        Serial.printf("%s LINK request | %u (%s) wants to connect over the "
-                      "%s | id %08lX | accept or decline\n",
-            net.tag, machine.peer(), device_name(machine.peer()),
-            relay_label(net), static_cast<unsigned long>(machine.call_id()));
-        last_ring_ms = now - app_config::ring_tone_period_ms;
-        break;
-    case call::state::connected:
-        peer_id = machine.peer();
-        drop_old_streams(machine);
-        net.logged_route[0] = '\0';
-        Serial.printf("%s LINK connected to %u (%s) | id %08lX | session "
-                      "%08lX\n",
-            net.tag, machine.peer(), device_name(machine.peer()),
-            static_cast<unsigned long>(machine.call_id()),
-            static_cast<unsigned long>(
-                net.peers[machine.peer()].link.session_id()));
-        break;
-    case call::state::idle:
-        break;
-    }
-}
-
-// Logs the connection's route when first known and each time it changes.
-void report_relay_route(relay_net &net, uint32_t now)
-{
-    if (net.calls.current() != call::state::connected ||
-        now - net.route_checked_ms < 1000)
-    {
-        return;
-    }
-    net.route_checked_ms = now;
-    char route[sizeof(net.logged_route)];
-    relay_route_text(net.link, net.calls.peer(), now, route, sizeof(route));
-    if (strcmp(route, "finding...") == 0 ||
-        strcmp(route, net.logged_route) == 0)
-    {
-        return;
-    }
-    memcpy(net.logged_route, route, sizeof(route));
-    Serial.printf("%s ROUTE to %u (%s): %s\n", net.tag, net.calls.peer(),
-        device_name(net.calls.peer()), route);
 }
 
 // Pings every board with a session over this transport and logs when one
@@ -1149,54 +1054,6 @@ void service_relay_presence(relay_net &net, uint32_t now)
     }
 }
 
-// Ends the connection if its board went offline or made a new session
-// (rebooted).
-void check_relay_call_peer(relay_net &net, uint32_t now)
-{
-    call::machine &machine = net.calls;
-    if (machine.current() == call::state::idle)
-    {
-        net.call_session = net.call_session_for = 0;
-        return;
-    }
-    const uint8_t peer = machine.peer();
-    const uint32_t session = net.peers[peer].link.session_id();
-    if (machine.call_id() != net.call_session_for)
-    {
-        net.call_session_for = machine.call_id();
-        net.call_session = session;
-    }
-    const bool rebooted = session != net.call_session;
-    if (!rebooted && relay_peer_online(net.link, peer, now))
-    {
-        return;
-    }
-    Serial.printf("%s LINK %u (%s) %s: ending %s\n", net.tag, peer,
-        device_name(peer),
-        rebooted ? "made a new session (rebooted)" : "went offline",
-        call::state_name(machine.current()));
-    machine.lost(now);
-    net.call_session = net.call_session_for = 0;
-}
-
-void service_relay_calls(relay_net &net, uint32_t now)
-{
-    net.calls.set_unavailable(busy_elsewhere(net.calls));
-    check_relay_call_peer(net, now);
-    net.calls.tick(now);
-    send_relay_call_messages(net);
-    report_relay_call(net, now);
-    report_relay_route(net, now);
-    if (net.calls.current() == call::state::ringing &&
-        app_config::ring_tone_ms > 0 && !speaker::testing() &&
-        rx_play_at_us.load() == 0 &&
-        now - last_ring_ms >= app_config::ring_tone_period_ms)
-    {
-        last_ring_ms = now;
-        speaker::tone(app_config::ring_tone_hz, app_config::ring_tone_ms);
-    }
-}
-
 // Status and set-up
 
 void print_relay(relay_net &net)
@@ -1225,31 +1082,7 @@ void print_relay(relay_net &net)
             static_cast<unsigned long>(net.requests));
     }
     Serial.printf("%s | sessions", net.muted ? " | MUTED" : "");
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        if (!valid_peer(peer))
-        {
-            continue;
-        }
-        const relay_peer &state = net.peers[peer];
-        if (state.link.established() && relay_peer_online(net.link, peer, now))
-        {
-            char route[40];
-            relay_route_text(net.link, peer, now, route, sizeof(route));
-            Serial.printf(" %u=%08lX (route %s)", peer,
-                static_cast<unsigned long>(state.link.session_id()), route);
-        }
-        else if (state.link.established())
-        {
-            Serial.printf(" %u=%08lX(offline)", peer,
-                static_cast<unsigned long>(state.link.session_id()));
-        }
-        else
-        {
-            Serial.printf(" %u=%s", peer, state.link.paired() ? "waiting" :
-                "no key");
-        }
-    }
+    print_sessions(net.link, now);
     Serial.println();
 }
 
@@ -1307,8 +1140,7 @@ void setup_relay_keys()
 
 void setup_relay()
 {
-    relay_net *nets[] = {&flood_net, &routed_net};
-    for (relay_net *net : nets)
+    for (relay_net *net : relay_nets)
     {
         net->calls.begin(own_id);  // ESP-NOW's timings.
         net->calls.seed(esp_random());
@@ -1321,7 +1153,7 @@ void setup_relay()
     const uint32_t now = millis();
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
-        for (relay_net *net : nets)
+        for (relay_net *net : relay_nets)
         {
             if (net->peers[peer].link.paired())
             {
@@ -1334,12 +1166,11 @@ void setup_relay()
 void service_relay(uint32_t now)
 {
     service_routed(now);
-    relay_net *nets[] = {&flood_net, &routed_net};
-    for (relay_net *net : nets)
+    for (relay_net *net : relay_nets)
     {
         service_relay_sessions(*net, now);
         service_relay_presence(*net, now);
-        service_relay_calls(*net, now);
+        service_calls(net->link, now);
     }
 }
 
@@ -1385,13 +1216,12 @@ void relay_set_muted(relay_net &net, bool on)
 // follow it on their own (voice_via()).
 bool run_relay_command(const char *line, uint32_t now)
 {
-    relay_net *nets[] = {&flood_net, &routed_net};
-    const char *names[] = {"flood", "routed"};
-    for (size_t i = 0; i < 2; ++i)
+    for (relay_net *each : relay_nets)
     {
-        relay_net &net = *nets[i];
-        const size_t name_size = strlen(names[i]);
-        if (strncmp(line, names[i], name_size) != 0)
+        relay_net &net = *each;
+        const char *name = way(net.link).name;  // "flood", "routed"
+        const size_t name_size = strlen(name);
+        if (strncmp(line, name, name_size) != 0)
         {
             continue;
         }
@@ -1446,34 +1276,11 @@ bool run_relay_command(const char *line, uint32_t now)
         relay_set_block(board, block);
         return true;
     }
-    for (relay_net *net : nets)
+    for (relay_net *net : relay_nets)
     {
-        if (net->calls.current() == call::state::idle)
+        if (net->calls.current() != call::state::idle &&
+            run_link_command(net->calls, way(net->link).tag, line, now))
         {
-            continue;
-        }
-        if (strcmp(line, "accept") == 0)
-        {
-            if (!net->calls.answer(now))
-            {
-                Serial.printf("%s LINK no request to accept\n", net->tag);
-            }
-            return true;
-        }
-        if (strcmp(line, "decline") == 0)
-        {
-            if (!net->calls.decline(now))
-            {
-                Serial.printf("%s LINK no request to decline\n", net->tag);
-            }
-            return true;
-        }
-        if (strcmp(line, "disconnect") == 0)
-        {
-            if (!net->calls.hang_up(now))
-            {
-                Serial.printf("%s LINK not connected\n", net->tag);
-            }
             return true;
         }
     }
