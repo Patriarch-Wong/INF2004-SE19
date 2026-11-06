@@ -78,7 +78,6 @@ struct counters
     uint32_t parent_losses;
     uint32_t router_misses;  // Root: looks for the absent router.
     uint32_t restarts;       // restart() and stop() calls.
-    uint32_t note_drops;
 };
 
 // Sets the mesh up and starts it as a node, looking for a mesh to join.
@@ -96,8 +95,6 @@ void stop();
 bool can_restart();
 
 state current();
-// millis() when the current state began.
-uint32_t state_since_ms();
 const char *state_name(state value);
 // This board is the root now.
 bool is_root();

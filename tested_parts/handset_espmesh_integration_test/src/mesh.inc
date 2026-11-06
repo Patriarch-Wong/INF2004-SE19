@@ -26,15 +26,10 @@
 // or sends to it keep failing (this board left the mesh, or the mesh has
 // no route to it).
 
-struct mesh_peer
+// A board over the mesh: the session and presence state ESP-NOW keeps
+// (peer_state), how sends to it are going, and where it hangs.
+struct mesh_peer : peer_state
 {
-    session::link link;
-    uint32_t last_hello_ms = 0;
-    uint32_t hellos = 0;  // Sent since the handshake started.
-    uint32_t last_accept_ms = 0;
-    uint32_t last_resync_ms = 0;
-    uint32_t last_presence_ms = 0;  // Last presence ping sent.
-    bool shown_online = false;      // Last state logged as MESH PEER.
     uint32_t send_failures = 0;     // In a row; a send that works resets.
     uint32_t last_send_ok_ms = 0;
     // Where the board hangs in the mesh, from its last presence ping: its
@@ -50,12 +45,6 @@ uint32_t mesh_control_sequence = 0;
 uint32_t mesh_accepted = 0;
 uint32_t mesh_rejected = 0;
 mesh_radio::state mesh_shown_state = mesh_radio::state::off;
-
-call::state mesh_shown_call = call::state::idle;
-uint32_t mesh_shown_ends = 0;
-uint32_t mesh_call_send_drops = 0;
-uint32_t mesh_call_session = 0;
-uint32_t mesh_call_session_for = 0;
 
 // Serial `mesh mute on|off`: drops every mesh frame sent and received, as
 // out of range would (the mesh itself stays up), for link-loss tests.
@@ -73,15 +62,12 @@ bool mesh_can_send(uint8_t peer)
     return mesh_peers[peer].link.established();
 }
 
-// Sends to `peer` failed several times in a row, with none working for
-// ack_lost_ms: as ESP-NOW's missing acknowledgements (acks_lost). Signed:
-// the last good send can be stamped after the loop's `now`.
+// Sends to `peer` keep failing: as ESP-NOW's missing acknowledgements
+// (acks_lost).
 bool mesh_sends_failing(uint8_t peer, uint32_t now)
 {
     const mesh_peer &state = mesh_peers[peer];
-    return state.send_failures >= app_config::ack_lost_failures &&
-        static_cast<int32_t>(now - state.last_send_ok_ms) >=
-            static_cast<int32_t>(app_config::ack_lost_ms);
+    return sends_failing(state.send_failures, state.last_send_ok_ms, now);
 }
 
 // A mesh session is up, something from the board opened recently, and
@@ -89,8 +75,7 @@ bool mesh_sends_failing(uint8_t peer, uint32_t now)
 bool mesh_peer_online(uint8_t peer, uint32_t now)
 {
     return mesh_can_send(peer) &&
-        static_cast<int32_t>(now - mesh_peers[peer].last_accept_ms) <
-            static_cast<int32_t>(app_config::presence_timeout_ms) &&
+        within_presence(mesh_peers[peer].last_accept_ms, now) &&
         !mesh_sends_failing(peer, now);
 }
 
@@ -120,9 +105,7 @@ bool mesh_parent_of(uint8_t id, uint32_t now, uint8_t *parent)
         return false;
     }
     const mesh_peer &state = mesh_peers[id];
-    if (!state.placed ||
-        static_cast<int32_t>(now - state.placed_ms) >=
-            static_cast<int32_t>(app_config::presence_timeout_ms))
+    if (!state.placed || !within_presence(state.placed_ms, now))
     {
         return false;
     }
@@ -244,10 +227,7 @@ void mesh_print_board(const uint8_t *mac)
 
 void mesh_reject(const mesh_radio::received_frame &frame, const char *reason)
 {
-    ++mesh_rejected;
-    Serial.print("MESH REJECT ");
-    radio::print_mac(frame.mac);
-    Serial.printf(" | %u bytes | %s\n", frame.size, reason);
+    log_reject("MESH ", mesh_rejected, frame.mac, frame.size, reason);
 }
 
 // Every mesh frame goes out here: mute, and the run of failures per peer.
@@ -276,17 +256,11 @@ esp_err_t mesh_transmit(uint8_t peer, const uint8_t *frame, size_t size)
 void mesh_send_control(uint8_t destination,
     const control_frame::message &content)
 {
-    if (++mesh_control_sequence == 0)
-    {
-        mesh_control_sequence = 1;
-    }
-    const secure_message::header fields = {secure_message::version,
-        control_frame::type_session, own_id, destination,
-        mesh_control_sequence};
     uint8_t frame[secure_message::max_frame_size];
     size_t size = 0;
-    const status built = control_frame::build(e2e_keys::network, fields,
-        content, frame, sizeof(frame), &size);
+    const status built = build_control(mesh_control_sequence,
+        control_frame::type_session, destination, content, frame,
+        sizeof(frame), &size);
     if (built != status::ok)
     {
         Serial.printf("MESH control frame not built: %s\n",
@@ -301,33 +275,15 @@ esp_err_t mesh_send_payload(uint8_t peer, const uint8_t *payload,
 {
     uint8_t frame[secure_message::max_frame_size] = {};
     size_t frame_size = 0;
-    uint32_t counter = 0;
-    const status sealed = mesh_peers[peer].link.seal(e2e_keys::network, type,
-        payload, size, frame, sizeof(frame), &frame_size, &counter);
-    if (sealed != status::ok)
+    if (!seal_payload(mesh_peers[peer].link, "MESH ", type, payload, size,
+            frame, sizeof(frame), &frame_size))
     {
-        Serial.printf("MESH SEAL_ERROR %s\n",
-            secure_message::status_name(sealed));
         return ESP_FAIL;
     }
     return mesh_transmit(peer, frame, frame_size);
 }
 
-// Sessions, as main.cpp's ESP-NOW ones
-
-void mesh_start_session(uint8_t peer, uint32_t now)
-{
-    uint8_t nonce[session::nonce_size];
-    esp_fill_random(nonce, sizeof(nonce));
-    control_frame::message hello = {};
-    if (mesh_peers[peer].link.initiate(nonce, &hello))
-    {
-        mesh_send_control(peer, hello);
-        mesh_peers[peer].last_hello_ms = now;
-        mesh_peers[peer].hellos = 1;
-        Serial.printf("MESH SESSION hello -> %u\n", peer);
-    }
-}
+// Sessions (handset.inc's, over the mesh)
 
 // This board is in the mesh (joined, or formed it as root): make a session
 // with every paired board that has none, and hurry a handshake already
@@ -343,110 +299,13 @@ void mesh_start_sessions(uint32_t now)
         }
         if (!state.link.initiating())
         {
-            mesh_start_session(peer, now);
+            start_session(via::mesh, peer, now);
         }
         else
         {
             state.hellos = 0;
             state.last_hello_ms = now - app_config::session_retry_ms;
         }
-    }
-}
-
-void service_mesh_sessions(uint32_t now)
-{
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        mesh_peer &state = mesh_peers[peer];
-        control_frame::message hello = {};
-        // Fast at first, then slowly, as over ESP-NOW (ISSUES.md B1).
-        const bool slow = state.hellos >= app_config::session_fast_hellos;
-        const uint32_t period = slow ? app_config::session_slow_retry_ms :
-            app_config::session_retry_ms;
-        if (state.link.initiating() && now - state.last_hello_ms >= period &&
-            state.link.hello(&hello))
-        {
-            mesh_send_control(peer, hello);
-            state.last_hello_ms = now;
-            ++state.hellos;
-            if (state.hellos == app_config::session_fast_hellos)
-            {
-                Serial.printf("MESH SESSION %u not answering: retrying "
-                              "every %lu s\n",
-                    peer, static_cast<unsigned long>(
-                        app_config::session_slow_retry_ms / 1000));
-            }
-            else if (!slow)
-            {
-                Serial.printf("MESH SESSION hello -> %u (retry)\n", peer);
-            }
-        }
-    }
-}
-
-// A paired peer whose frames keep failing to open, with nothing accepted
-// from it for a while, gets a new handshake in case the two lost step.
-void mesh_maybe_resync(uint8_t peer, uint32_t now)
-{
-    mesh_peer &state = mesh_peers[peer];
-    if (!state.link.initiating() &&
-        now - state.last_accept_ms >= app_config::session_resync_ms &&
-        now - state.last_resync_ms >= app_config::session_resync_ms)
-    {
-        state.last_resync_ms = now;
-        Serial.printf("MESH SESSION resync with %u\n", peer);
-        mesh_start_session(peer, now);
-    }
-}
-
-void mesh_print_session(const char *how, uint8_t peer)
-{
-    Serial.printf("MESH SESSION established with %u | session %08lX | %s\n",
-        peer, static_cast<unsigned long>(mesh_peers[peer].link.session_id()),
-        how);
-}
-
-void handle_mesh_session(const mesh_radio::received_frame &frame,
-    const secure_message::header &fields,
-    const control_frame::message &content, uint32_t now)
-{
-    mesh_peer &state = mesh_peers[fields.source];
-    if (!state.link.paired())
-    {
-        mesh_reject(frame, "no pair key for source");
-        return;
-    }
-    if (content.step == static_cast<uint8_t>(session::step::hello) &&
-        state.link.initiating())
-    {
-        // The peer is back. If this board has the lower ID it ignores the
-        // hello and its own must win, so send it now.
-        state.hellos = 0;
-        state.last_hello_ms = now - app_config::session_retry_ms;
-    }
-    uint8_t nonce[session::nonce_size];
-    esp_fill_random(nonce, sizeof(nonce));
-    control_frame::message response = {};
-    switch (state.link.receive(content, nonce, &response))
-    {
-    case session::event::replied:
-        mesh_send_control(fields.source, response);
-        Serial.printf("MESH SESSION reply -> %u\n", fields.source);
-        break;
-    case session::event::established:
-        mesh_send_control(fields.source, response);
-        mesh_print_session("initiator", fields.source);
-        state.last_accept_ms = now;  // Online now.
-        break;
-    case session::event::confirmed:
-        mesh_print_session("responder", fields.source);
-        state.last_accept_ms = now;
-        break;
-    case session::event::bad_tag:
-        mesh_reject(frame, "bad handshake tag");
-        break;
-    case session::event::ignored:
-        break;
     }
 }
 
@@ -493,7 +352,12 @@ void handle_mesh(const mesh_radio::received_frame &frame, uint32_t now)
         }
         else
         {
-            handle_mesh_session(frame, fields, content, now);
+            const char *problem = take_session(via::mesh, fields.source,
+                content, now);
+            if (problem)
+            {
+                mesh_reject(frame, problem);
+            }
         }
         return;
     }
@@ -507,63 +371,26 @@ void handle_mesh(const mesh_radio::received_frame &frame, uint32_t now)
         result != session::open_result::accepted_new_session)
     {
         mesh_reject(frame, session::open_result_name(result));
-        mesh_maybe_resync(fields.source, now);
+        maybe_resync(via::mesh, fields.source, now);
         return;
     }
     ++mesh_accepted;
     state.last_accept_ms = now;
-    if (opened.type == secure_message::type_text)
+    // Over the mesh a presence ping also says where the board hangs:
+    // parent (0 for the root), then layer.
+    if (opened.type == secure_message::type_voice && size >= 3 &&
+        voice_link::kind(payload, size) == kind_presence)
     {
-        on_text(via::mesh, fields.source, payload, size);
-        return;
+        state.placed = true;
+        state.parent = payload[1];
+        state.layer = payload[2];
+        state.placed_ms = now;
     }
-    if (opened.type != secure_message::type_voice)
+    const char *problem = take_payload(via::mesh, fields.source, opened.type,
+        payload, size, arrival, now);
+    if (problem)
     {
-        return;
-    }
-    if (voice_link::kind(payload, size) == call::kind_call)
-    {
-        call::message content = {};
-        if (call::parse(payload, size, &content))
-        {
-            // Busy over ESP-NOW or LoRa: a new mesh request is answered
-            // busy.
-            mesh_calls.set_unavailable(
-                calls.current() != call::state::idle || lora_in_use());
-            mesh_calls.receive(fields.source, content, now);
-        }
-        else
-        {
-            mesh_reject(frame, "bad connection payload");
-        }
-        return;
-    }
-    mesh_calls.heard_from(fields.source, now);
-    switch (voice_link::kind(payload, size))
-    {
-    case voice_link::kind_voice:
-        on_voice(via::mesh, fields.source, payload, size, arrival, now);
-        break;
-    case voice_link::kind_nack:
-        on_nack(via::mesh, fields.source, payload, size);
-        break;
-    case voice_link::kind_end:
-        on_end(via::mesh, fields.source, payload, size);
-        break;
-    case kind_presence:
-        // Opening it updated last_accept_ms. Over the mesh it also says
-        // where the board hangs: parent (0 for the root), then layer.
-        if (size >= 3)
-        {
-            state.placed = true;
-            state.parent = payload[1];
-            state.layer = payload[2];
-            state.placed_ms = now;
-        }
-        break;
-    default:
-        mesh_reject(frame, "unknown voice payload");
-        break;
+        mesh_reject(frame, problem);
     }
 }
 
@@ -602,81 +429,9 @@ bool place_mesh_call(uint8_t peer, uint32_t now)
             "no mesh session");
         return false;
     }
-    uint32_t id = 0;
-    do
-    {
-        id = esp_random();
-    } while (id == 0);
+    const uint32_t id = random_id();
     mesh_calls.set_unavailable(false);
-    if (!mesh_calls.dial(peer, id, now))
-    {
-        Serial.printf("MESH LINK refused: already %s\n",
-            call::state_name(mesh_calls.current()));
-        return false;
-    }
-    return true;
-}
-
-void send_mesh_call_messages()
-{
-    call::outgoing item = {};
-    while (mesh_calls.next_outgoing(&item))
-    {
-        uint8_t payload[call::message_size];
-        size_t size = 0;
-        if (!mesh_can_send(item.peer) ||
-            !call::build(item.content, payload, sizeof(payload), &size) ||
-            mesh_send_payload(item.peer, payload, size,
-                secure_message::type_voice) != ESP_OK)
-        {
-            ++mesh_call_send_drops;  // Resends and timeouts recover.
-        }
-    }
-}
-
-// Logs each change of mesh connection state.
-void report_mesh_call(uint32_t now)
-{
-    if (mesh_calls.end_count() != mesh_shown_ends)
-    {
-        mesh_shown_ends = mesh_calls.end_count();
-        Serial.printf("MESH LINK disconnected from %u (%s) | %s\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            call::end_reason_name(mesh_calls.last_end()));
-    }
-    const call::state current = mesh_calls.current();
-    if (current == mesh_shown_call)
-    {
-        return;
-    }
-    mesh_shown_call = current;
-    switch (current)
-    {
-    case call::state::calling:
-        Serial.printf("MESH LINK connecting to %u (%s) | id %08lX\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            static_cast<unsigned long>(mesh_calls.call_id()));
-        break;
-    case call::state::ringing:
-        Serial.printf("MESH LINK request | %u (%s) wants to connect over "
-                      "ESP-MESH | id %08lX | accept or decline\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            static_cast<unsigned long>(mesh_calls.call_id()));
-        last_ring_ms = now - app_config::ring_tone_period_ms;
-        break;
-    case call::state::connected:
-        peer_id = mesh_calls.peer();
-        drop_old_streams(mesh_calls);
-        Serial.printf("MESH LINK connected to %u (%s) | id %08lX | session "
-                      "%08lX\n",
-            mesh_calls.peer(), device_name(mesh_calls.peer()),
-            static_cast<unsigned long>(mesh_calls.call_id()),
-            static_cast<unsigned long>(
-                mesh_peers[mesh_calls.peer()].link.session_id()));
-        break;
-    case call::state::idle:
-        break;
-    }
+    return dial(mesh_calls, "MESH ", peer, id, now);
 }
 
 // Where this board hung when it last pinged, so a move pings at once.
@@ -694,113 +449,8 @@ void service_mesh_presence(uint32_t now)
         layer != mesh_pinged_layer;
     mesh_pinged_parent = parent;
     mesh_pinged_layer = layer;
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        if (!valid_peer(peer))
-        {
-            continue;
-        }
-        mesh_peer &state = mesh_peers[peer];
-        const uint32_t period = state.shown_online ?
-            app_config::presence_ping_ms : app_config::presence_offline_ping_ms;
-        if (mesh_ready() && mesh_can_send(peer) &&
-            (moved || now - state.last_presence_ms >= period))
-        {
-            state.last_presence_ms = now;
-            const uint8_t payload[] = {kind_presence, parent, layer};
-            mesh_send_payload(peer, payload, sizeof(payload),
-                secure_message::type_voice);  // Best effort.
-        }
-        const bool online = mesh_peer_online(peer, now);
-        if (online != state.shown_online)
-        {
-            state.shown_online = online;
-            Serial.printf("MESH PEER %u (%s) %s\n", peer, device_name(peer),
-                online ? "online" : "offline");
-        }
-    }
-}
-
-// Ends the mesh connection if its board is gone (pings stopped, or sends
-// to it keep failing) or made a new mesh session, which means it
-// rebooted.
-void check_mesh_call_peer(uint32_t now)
-{
-    if (mesh_calls.current() == call::state::idle)
-    {
-        mesh_call_session = mesh_call_session_for = 0;
-        return;
-    }
-    const uint8_t peer = mesh_calls.peer();
-    const uint32_t session = mesh_peers[peer].link.session_id();
-    if (mesh_calls.call_id() != mesh_call_session_for)
-    {
-        mesh_call_session_for = mesh_calls.call_id();
-        mesh_call_session = session;
-    }
-    const bool rebooted = session != mesh_call_session;
-    if (!rebooted && mesh_peer_online(peer, now))
-    {
-        return;
-    }
-    Serial.printf("MESH LINK %u (%s) %s: ending %s\n", peer,
-        device_name(peer),
-        rebooted ? "made a new session (rebooted)" :
-        !mesh_ready() ? "can't be reached: this board left the mesh" :
-        mesh_sends_failing(peer, now) ? "can't be reached (sends failing)" :
-            "went offline",
-        call::state_name(mesh_calls.current()));
-    mesh_calls.lost(now);
-    mesh_call_session = mesh_call_session_for = 0;
-}
-
-// Logs the route of the mesh connection when it is first known and each
-// time it changes (a middleman came or went).
-char mesh_logged_route[40] = {};
-uint32_t mesh_route_checked_ms = 0;
-
-void report_mesh_route(uint32_t now)
-{
-    if (mesh_calls.current() != call::state::connected)
-    {
-        mesh_logged_route[0] = '\0';
-        return;
-    }
-    if (now - mesh_route_checked_ms < 1000)
-    {
-        return;
-    }
-    mesh_route_checked_ms = now;
-    char route[sizeof(mesh_logged_route)];
-    mesh_route_text(mesh_calls.peer(), now, route, sizeof(route));
-    if (strcmp(route, "finding...") == 0 ||
-        strcmp(route, mesh_logged_route) == 0)
-    {
-        return;
-    }
-    memcpy(mesh_logged_route, route, sizeof(route));
-    Serial.printf("MESH ROUTE to %u (%s): %s\n", mesh_calls.peer(),
-        device_name(mesh_calls.peer()), route);
-}
-
-void service_mesh_calls(uint32_t now)
-{
-    mesh_calls.set_unavailable(calls.current() != call::state::idle ||
-        lora_in_use());
-    check_mesh_call_peer(now);
-    mesh_calls.tick(now);
-    send_mesh_call_messages();
-    report_mesh_call(now);
-    report_mesh_route(now);
-    // Beep while a mesh request waits for this user.
-    if (mesh_calls.current() == call::state::ringing &&
-        app_config::ring_tone_ms > 0 && !speaker::testing() &&
-        rx_play_at_us.load() == 0 &&
-        now - last_ring_ms >= app_config::ring_tone_period_ms)
-    {
-        last_ring_ms = now;
-        speaker::tone(app_config::ring_tone_hz, app_config::ring_tone_ms);
-    }
+    const uint8_t ping[] = {kind_presence, parent, layer};
+    service_presence(via::mesh, now, mesh_ready(), moved, ping, sizeof(ping));
 }
 
 // Root failover
@@ -959,8 +609,7 @@ void service_mesh_failover(uint32_t now)
     {
         mesh_alone = false;
     }
-    const bool connections_idle = calls.current() == call::state::idle &&
-        !lora_in_use() && !mesh_in_use();
+    const bool connections_idle = !any_connection();
     if (mesh_alone && now - mesh_alone_since >= mesh_alone_limit &&
         connections_idle && !mesh_voice_running())
     {
@@ -1265,10 +914,53 @@ void service_mesh(uint32_t now)
     }
     if (mesh_ready())
     {
-        service_mesh_sessions(now);
+        service_sessions(via::mesh, now);
     }
     service_mesh_presence(now);
-    service_mesh_calls(now);
+    service_calls(via::mesh, now);
+}
+
+// Both Wi-Fi ways (declared in handset.inc; here, after the last way)
+
+peer_state &peer_via(via link, uint8_t peer)
+{
+    return link == via::mesh ? static_cast<peer_state &>(mesh_peers[peer]) :
+        peers[peer];
+}
+
+// `now` is not needed over either way here.
+void send_control_via(via link, uint8_t destination,
+    const control_frame::message &content, uint32_t)
+{
+    if (link == via::mesh)
+    {
+        mesh_send_control(destination, content);
+        return;
+    }
+    send_control(control_frame::type_session, destination,
+        radio::find_device(destination)->mac, content);
+}
+
+// Only the mesh has a route (ESP-NOW is always direct), so the way is not
+// needed.
+void route_text_via(via, uint8_t peer, uint32_t now, char *text,
+    size_t capacity)
+{
+    mesh_route_text(peer, now, text, capacity);
+}
+
+// Why `peer` looks gone over `link` (it didn't reboot): for the log line
+// that ends the connection.
+const char *gone_reason(via link, uint8_t peer, uint32_t now)
+{
+    if (link == via::mesh)
+    {
+        return !mesh_ready() ? "can't be reached: this board left the mesh" :
+            mesh_sends_failing(peer, now) ? "can't be reached (sends failing)" :
+            "went offline";
+    }
+    return acks_lost(peer, now) ? "stopped acknowledging (radio)" :
+        "went offline";
 }
 
 // Test settings, from the Tools page (ui.inc) or serial: link loss, and a
@@ -1357,33 +1049,5 @@ bool run_mesh_command(const char *line, uint32_t now)
         }
         return true;
     }
-    if (!mesh_in_use())
-    {
-        return false;
-    }
-    if (strcmp(line, "accept") == 0)
-    {
-        if (!mesh_calls.answer(now))
-        {
-            Serial.println("MESH LINK no request to accept");
-        }
-        return true;
-    }
-    if (strcmp(line, "decline") == 0)
-    {
-        if (!mesh_calls.decline(now))
-        {
-            Serial.println("MESH LINK no request to decline");
-        }
-        return true;
-    }
-    if (strcmp(line, "disconnect") == 0)
-    {
-        if (!mesh_calls.hang_up(now))
-        {
-            Serial.println("MESH LINK not connected");
-        }
-        return true;
-    }
-    return false;
+    return mesh_in_use() && run_link_command(mesh_calls, "MESH ", line, now);
 }
