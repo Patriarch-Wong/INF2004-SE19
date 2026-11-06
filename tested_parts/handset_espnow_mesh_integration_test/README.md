@@ -148,6 +148,9 @@ Menu ── ESP-NOW ─────▶ (as before)
 The menu has 9 rows, so it scrolls (UP/DOWN). Every page goes back with
 CANCEL.
 
+**Status and Routes pages scroll:** with more boards than fit, a scroll
+bar shows on the right, and **UP/DOWN** move half a page.
+
 **Routes page:** this board's place in ESP-MESH (root, or layer and
 parent; the boards joined through it), then for each other board:
 
@@ -167,7 +170,7 @@ setting is on; the line above the hints confirms each change):
 | `Block Board N` (one per board) | Ignore flood and routed frames heard directly from board N, as if it were out of range. Set it on both boards to force a middleman |
 | `Rate: 1 Mbps` | Switch the ESP-NOW rate between 1 and 6 Mbit/s (set it the same on every board) |
 | `Leave mesh` / `Rejoin mesh` | Leave ESP-MESH completely, as if this board were down; then come back |
-| `Be mesh root` | Become an ESP-MESH root now (green dot while this board is root) |
+| `Be mesh root` | Make this board the ESP-MESH root for every board, and keep it root: the others give way and join it (green dot while this board is root) |
 | `Mute flood`, `Mute routed`, `Mute mesh`, `Mute LoRa` | Drop everything that way, for link-loss tests |
 
 The connected screen shows the route under the other board's name:
@@ -195,12 +198,14 @@ monitors first: an open monitor blocks the port.
 | `5B5F021600` | Board 1 | COM11 |
 | `5B5F021597` | Board 2 | COM4 |
 | `5B5F021589` | Board 3 (MAC `E0:72:A1:D9:A4:94`) | COM10 |
+| `5B42019238` | Board 4 (MAC `E0:72:A1:D8:0E:48`) | COM15 |
 
 ```powershell
 cd tested_parts\handset_espnow_mesh_integration_test
 ~\.platformio\penv\Scripts\pio.exe run -e board1 -t upload --upload-port COM11
 ~\.platformio\penv\Scripts\pio.exe run -e board2 -t upload --upload-port COM4
 ~\.platformio\penv\Scripts\pio.exe run -e board3 -t upload --upload-port COM10
+~\.platformio\penv\Scripts\pio.exe run -e board4 -t upload --upload-port COM15
 ```
 
 Each board needs its own environment (`boardN`), or it stops with "Wrong
@@ -278,7 +283,7 @@ get through via board 3, and route discovery only finds `1 > 3 > 2`.
 | T5 Middleman down, routed | The same over the routed relay | The call ends; Routes shows Board 2 `Routed offline` (no path while blocked); unblocked, `1 > 2, direct` again |
 | T6 Faster radio | If relayed voice shows `MISSING`: on **every** board Tools → **Rate: 1 Mbps** → OK (becomes `Rate: 6 Mbps`) | Fewer or no missing frames. The earlier relay voice test needed 6 Mbit/s |
 | T7 ESP-MESH root down | Board 1 (root): Tools → **Leave mesh** → OK | Board 2's Routes page: `Mesh: Looking; root in N s`, then `Mesh: root`. Board 1: **Rejoin mesh** → OK; it joins under board 2 |
-| T8 ESP-MESH split | Board 2: Tools → **Be mesh root** → OK | Within about a minute one root steps down; Routes shows one root again |
+| T8 Choose the mesh root | Board 3: Tools → **Be mesh root** → OK | Within about 10 s board 3's Routes page shows `Mesh: root`, the others `parent Board 3` (or through another board). A minute later board 3 is still root |
 | T9 Real distance | Boards 1 and 2 out of range of each other, board 3 between, nothing blocked | Both ways connect and show `via Board 3`; on the ESP-NOW list, board 2 is grey |
 | T10 Two relays | Four boards in a line (needs board 4's MAC in `network_config.h`) | Route `1 > 3 > 4 > 2, via 2 boards` |
 

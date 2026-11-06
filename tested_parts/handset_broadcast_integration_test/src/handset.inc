@@ -77,6 +77,11 @@ uint32_t tx_started_ms = 0;
 uint32_t tx_drain_until_ms = 0;
 uint32_t tx_last_end_ms = 0;
 voice_link::history sent;
+// Over ESP-MESH only every other frame is sent, carrying the one before
+// it (redundancy): through the root the mesh carries about 30 packets a
+// second, not voice's 50 (2026-11-06). The frame waiting for its partner.
+bool tx_held = false;
+uint32_t tx_held_sequence = 0;
 constexpr unsigned retransmit_capacity = 64;
 uint32_t retransmit_ring[retransmit_capacity];
 unsigned retransmit_head = 0;
@@ -213,6 +218,9 @@ bool mesh_in_use()
 bool mesh_peer_online(uint8_t peer, uint32_t now);
 esp_err_t mesh_send_payload(uint8_t peer, const uint8_t *payload,
     size_t size, uint8_t type);
+// The board chosen as mesh root, told over ESP-NOW (true if `payload` was
+// it).
+bool take_mesh_choice(uint8_t source, const uint8_t *payload, size_t size);
 
 // The flood mesh and routed relay's sending side (relay.inc); `link` is
 // via::flood or via::routed.
@@ -342,6 +350,10 @@ static_assert(kind_presence > voice_link::kind_end &&
         kind_presence != call::kind_call,
     "presence kind clashes with another payload kind");
 const uint8_t presence_ping[] = {kind_presence};
+// Over an ESP-NOW pair session: the board chosen as mesh root (mesh.inc).
+constexpr uint8_t kind_mesh_root = 8;
+static_assert(kind_mesh_root > kind_presence + 2,
+    "mesh root kind clashes with another payload kind");
 // Over a pair session, this board's broadcast key, and the receipt for one
 // (broadcast.inc).
 constexpr uint8_t kind_broadcast_key = 6;
@@ -857,6 +869,26 @@ void send_end(uint32_t now)
     tx_last_end_ms = now;
 }
 
+// Sends the held frame on its own (with the one before it), from the
+// history: its partner never came.
+void send_held()
+{
+    tx_held = false;
+    const voice_link::packet *packet = sent.find(tx_held_sequence);
+    const voice_link::packet *previous = redundancy && tx_held_sequence > 0 ?
+        sent.find(tx_held_sequence - 1) : nullptr;
+    uint8_t payload[voice_link::max_voice_size];
+    size_t size = 0;
+    if (packet &&
+        voice_link::build_voice(tx_flags, tx_stream, tx_held_sequence,
+            packet->bytes, packet->size, previous ? previous->bytes : nullptr,
+            previous ? previous->size : 0, payload, sizeof(payload), &size) &&
+        send_via(tx_via, tx_peer, payload, size) != ESP_OK)
+    {
+        ++tx_send_errors;
+    }
+}
+
 void send_encoded(const encoded &frame)
 {
     if (frame.sequence != tx_next)
@@ -880,6 +912,17 @@ void send_encoded(const encoded &frame)
     tx_crc = voice_link::crc32_update(tx_crc, frame.bytes, frame.size);
     tx_next = frame.sequence + 1;
     ++total_tx_frames;
+    if (tx_held && frame.sequence != tx_held_sequence + 1)
+    {
+        send_held();  // Its partner was skipped by the codec.
+    }
+    if (tx_via == via::mesh && redundancy && frame.sequence % 2 == 0)
+    {
+        tx_held = true;  // The next frame carries it.
+        tx_held_sequence = frame.sequence;
+        return;
+    }
+    tx_held = false;
     if (send_via(tx_via, tx_peer, payload, size) != ESP_OK)
     {
         ++tx_send_errors;
@@ -986,6 +1029,7 @@ bool start_talk_to(via link, uint8_t peer, bool test, uint32_t frames,
     tx_limit = frames;
     tx_crc = voice_link::crc32_begin();
     tx_retransmits = tx_nacks = tx_send_errors = tx_missing_from_codec = 0;
+    tx_held = false;
     sent.reset();
     retransmit_head = retransmit_count = 0;
     xQueueReset(encoded_queue);
@@ -1049,7 +1093,12 @@ void service_sender(uint32_t now)
             send_encoded(frame);
         }
     }
-    if (tx == tx_phase::talking && tx_next >= tx_limit)
+    // Every frame asked for went out, or the codec has encoded its last
+    // and none is left: frames it had to drop never come, and must not
+    // hold the stream open.
+    if (tx == tx_phase::talking && (tx_next >= tx_limit ||
+            (codec_tx_encoded.load() >= tx_limit && !codec_tx_busy.load() &&
+                uxQueueMessagesWaiting(encoded_queue) == 0)))
     {
         stop_talk();
     }
@@ -1060,6 +1109,10 @@ void service_sender(uint32_t now)
         {
             finish_send();
             return;
+        }
+        if (tx_held)
+        {
+            send_held();  // The last frame had no partner.
         }
         tx = tx_phase::draining;
         tx_drain_until_ms = now + app_config::sender_linger_ms;
@@ -1500,6 +1553,11 @@ void handle_data(const radio::received_frame &frame,
         take_broadcast_key(false, fields.source, payload, size))
     {
         return;  // A broadcast key or its receipt (broadcast.inc).
+    }
+    if (opened.type == secure_message::type_voice &&
+        take_mesh_choice(fields.source, payload, size))
+    {
+        return;  // The board chosen as mesh root (mesh.inc).
     }
     const char *problem = take_payload(via::espnow, fields.source,
         opened.type, payload, size, arrival, now);

@@ -940,42 +940,151 @@ int add_board_marks(char *line, size_t capacity, int used,
     return used;
 }
 
-void draw_status_values()
+// Status and Routes pages: lines that scroll with UP/DOWN when there are
+// more than fit (with four other boards there are).
+struct page_line
+{
+    char text[40];
+    uint16_t color;
+    bool gap;  // A little space above it: a new group.
+};
+constexpr size_t max_page_lines = 32;
+constexpr int16_t page_gap = 6;
+page_line page_lines[max_page_lines];
+size_t page_line_count = 0;
+size_t page_scroll = 0;      // First line shown.
+size_t page_scroll_max = 0;  // Scrolled this far, the last line shows.
+size_t page_shown = 0;       // Lines on screen now.
+uint32_t page_drawn_layout = UINT32_MAX;  // To clear only when lines move.
+
+__attribute__((format(printf, 3, 4)))
+void page_add(uint16_t color, bool gap, const char *format, ...)
+{
+    if (page_line_count == max_page_lines)
+    {
+        return;
+    }
+    page_line &line = page_lines[page_line_count++];
+    line.color = color;
+    line.gap = gap;
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line.text, sizeof(line.text), format, args);
+    va_end(args);
+}
+
+// "Label 2 ok 3 -": each other board, ok or not.
+void page_add_marks(const char *label, bool gap, bool (*ok)(uint8_t id))
 {
     char line[40];
-    int16_t y = 44;
+    add_board_marks(line, sizeof(line),
+        snprintf(line, sizeof(line), "%s", label), ok);
+    page_add(ST77XX_WHITE, gap, "%s", line);
+}
+
+// How many lines from `first` fit between `top` and `bottom`, `pitch`
+// apart, plus their gaps.
+size_t page_fits(size_t first, int16_t top, int16_t bottom, int16_t pitch)
+{
+    int16_t y = top;
+    size_t count = 0;
+    for (size_t i = first; i < page_line_count; ++i)
+    {
+        y += i > first && page_lines[i].gap ? page_gap : 0;
+        if (y + 8 > bottom)
+        {
+            break;
+        }
+        ++count;
+        y += pitch;
+    }
+    return count;
+}
+
+// Draws the lines from page_scroll that fit, and a scroll bar on the right
+// edge when not all do. The area is cleared only when the lines move, so
+// the once-a-second redraw doesn't flicker.
+void draw_page_lines(int16_t top, int16_t bottom, int16_t pitch)
+{
+    page_scroll_max = 0;
+    while (page_scroll_max < page_line_count &&
+        page_scroll_max + page_fits(page_scroll_max, top, bottom, pitch) <
+            page_line_count)
+    {
+        ++page_scroll_max;
+    }
+    if (page_scroll > page_scroll_max)
+    {
+        page_scroll = page_scroll_max;
+    }
+    page_shown = page_fits(page_scroll, top, bottom, pitch);
+    uint32_t layout = page_scroll << 16 ^ page_line_count << 8;
+    for (size_t i = 0; i < page_shown; ++i)
+    {
+        layout ^= static_cast<uint32_t>(page_lines[page_scroll + i].gap) <<
+            (i % 8);
+    }
+    if (layout != page_drawn_layout)
+    {
+        page_drawn_layout = layout;
+        lcd.fillRect(0, top, lcd.width(), bottom - top, ST77XX_BLACK);
+    }
+    int16_t y = top;
+    for (size_t i = page_scroll; i < page_scroll + page_shown; ++i)
+    {
+        y += i > page_scroll && page_lines[i].gap ? page_gap : 0;
+        draw_field(page_lines[i].text, 8, y, 1, page_lines[i].color, 218);
+        y += pitch;
+    }
+    if (page_scroll_max > 0)
+    {
+        const int16_t height = bottom - top;
+        const int16_t thumb = height * page_shown / page_line_count;
+        const int16_t offset = (height - thumb) * page_scroll /
+            page_scroll_max;
+        lcd.fillRect(lcd.width() - 5, top, 1, height, outline_color);
+        lcd.fillRect(lcd.width() - 6, top + offset, 3, thumb,
+            highlight_color);
+    }
+}
+
+// UP/DOWN on the Status or Routes page: half a page each press.
+void scroll_page(int direction, uint32_t now);
+
+constexpr int16_t status_top = 44;
+constexpr int16_t status_bottom = 204;
+
+void draw_status_values()
+{
+    page_line_count = 0;
     const network_config::device *self = radio::find_device(own_id);
-    snprintf(line, sizeof(line), "ID %u  %02X:%02X:%02X:%02X:%02X:%02X", own_id,
-        self->mac[0], self->mac[1], self->mac[2], self->mac[3], self->mac[4],
-        self->mac[5]);
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 14;
-    snprintf(line, sizeof(line), "Channel %u, %u Mbps, buffer %lu ms",
-        network_config::channel, network_config::rate_mbps,
+    page_add(ST77XX_WHITE, false, "ID %u  %02X:%02X:%02X:%02X:%02X:%02X",
+        own_id, self->mac[0], self->mac[1], self->mac[2], self->mac[3],
+        self->mac[4], self->mac[5]);
+    page_add(ST77XX_WHITE, false, "Channel %u, %u Mbps, buffer %lu ms",
+        network_config::channel, radio::rate_mbps(),
         static_cast<unsigned long>(playout_ms));
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 20;
+    bool first = true;
     for (uint8_t id = 1; id <= max_id; ++id)
     {
         if (!valid_peer(id))
         {
             continue;
         }
-        const session::link &link = peers[id].link;
-        const bool online = peer_online(id, millis());
-        if (online)
+        if (peer_online(id, millis()))
         {
-            snprintf(line, sizeof(line), "%s: online %08lX", device_name(id),
-                static_cast<unsigned long>(link.session_id()));
+            page_add(listen_color, first, "%s: online %08lX",
+                device_name(id),
+                static_cast<unsigned long>(peers[id].link.session_id()));
         }
         else
         {
-            snprintf(line, sizeof(line), "%s: offline", device_name(id));
+            page_add(muted_color, first, "%s: offline", device_name(id));
         }
-        draw_field(line, 8, y, 1, online ? listen_color : muted_color, 224);
-        y += 14;
+        first = false;
     }
     // ESP-MESH: where this board is in it, then who is online over it.
+    char line[40];
     const mesh_radio::state mesh = mesh_radio::current();
     if (mesh == mesh_radio::state::failed)
     {
@@ -1001,79 +1110,55 @@ void draw_status_values()
     {
         mesh_looking_text(line, sizeof(line), "");
     }
-    draw_field(line, 8, y, 1, mesh == mesh_radio::state::connected ?
-        listen_color : mesh == mesh_radio::state::failed ? talk_color :
-        muted_color, 224);
-    y += 14;
-    int used = add_board_marks(line, sizeof(line),
-        snprintf(line, sizeof(line), "Mesh online:"),
+    page_add(mesh == mesh_radio::state::connected ? listen_color :
+        mesh == mesh_radio::state::failed ? talk_color : muted_color, true,
+        "%s", line);
+    page_add_marks("Mesh online:", false,
         [](uint8_t id) { return mesh_row_ready(id, millis()); });
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 14;
-    // LoRa: the radio, then each handset's LoRa session.
+    // LoRa: the radio, each handset's LoRa session, and the counts.
     const lora_radio::state radio = lora_radio::current();
     if (radio == lora_radio::state::failed)
     {
-        snprintf(line, sizeof(line), "LoRa ERR %d %s%s",
+        page_add(talk_color, true, "LoRa ERR %d %s%s",
             lora_radio::last_error(), lora_radio::failed_step(),
             lora_radio::busy_stuck() ? " BUSY high" : "");
     }
     else
     {
-        snprintf(line, sizeof(line), "LoRa %s %.1f MHz SF%u",
-            lora_radio::state_name(radio), app_config::lora_mhz,
-            app_config::lora_spreading_factor);
+        page_add(radio == lora_radio::state::ok ? listen_color : muted_color,
+            true, "LoRa %s %.1f MHz SF%u", lora_radio::state_name(radio),
+            app_config::lora_mhz, app_config::lora_spreading_factor);
     }
-    draw_field(line, 8, y, 1, radio == lora_radio::state::ok ? listen_color :
-        radio == lora_radio::state::failed ? talk_color : muted_color, 224);
-    y += 14;
-    // LoRa keys and counts on one line, to make room for the relay ways.
-    used = add_board_marks(line, sizeof(line),
-        snprintf(line, sizeof(line), "LoRa"), lora_can_send);
+    page_add_marks("LoRa keys:", false, lora_can_send);
     const lora_radio::counters c = lora_radio::stats();
-    if (used > 0 && used < static_cast<int>(sizeof(line)))
-    {
-        snprintf(line + used, sizeof(line) - used, "  sent %lu heard %lu",
-            static_cast<unsigned long>(c.sent),
-            static_cast<unsigned long>(c.received));
-    }
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 14;
+    page_add(ST77XX_WHITE, false, "LoRa sent %lu  heard %lu",
+        static_cast<unsigned long>(c.sent),
+        static_cast<unsigned long>(c.received));
     // Flood mesh and routed relay: who is online over each.
-    used = add_board_marks(line, sizeof(line),
-        snprintf(line, sizeof(line), "Flood"), [](uint8_t id) {
-            return relay_peer_online(via::flood, id, millis());
-        });
-    if (used > 0 && used < static_cast<int>(sizeof(line)))
-    {
-        used += snprintf(line + used, sizeof(line) - used, "  Routed");
-    }
-    add_board_marks(line, sizeof(line), used, [](uint8_t id) {
+    page_add_marks("Flood:", true, [](uint8_t id) {
+        return relay_peer_online(via::flood, id, millis());
+    });
+    page_add_marks("Routed:", false, [](uint8_t id) {
         return relay_peer_online(via::routed, id, millis());
     });
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 14;
-    snprintf(line, sizeof(line), "Frames ok %lu  rejected %lu",
+    page_add(ST77XX_WHITE, true, "Frames ok %lu  rejected %lu",
         static_cast<unsigned long>(accepted_count),
         static_cast<unsigned long>(rejected_count));
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 14;
-    snprintf(line, sizeof(line), "Sent %lu  played %lu  lost %lu",
+    page_add(ST77XX_WHITE, false, "Sent %lu  played %lu  lost %lu",
         static_cast<unsigned long>(total_tx_frames),
         static_cast<unsigned long>(total_rx_played),
         static_cast<unsigned long>(total_rx_lost));
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 14;
-    snprintf(line, sizeof(line), "Uptime %lu s",
+    page_add(ST77XX_WHITE, false, "Uptime %lu s",
         static_cast<unsigned long>(millis() / 1000));
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
+    draw_page_lines(status_top, status_bottom, 14);
 }
 
 void draw_status_page()
 {
     draw_title("Status", title_color);
     draw_status_values();
-    draw_hints(nullptr, "CANCEL: back");
+    draw_hints(page_scroll_max ? "UP/DOWN: more lines" : nullptr,
+        "CANCEL: back");
 }
 
 // Routes page: where this board is in ESP-MESH, then for each other board
@@ -1087,41 +1172,39 @@ uint16_t route_color(const char *route)
         strstr(route, "direct") ? listen_color : muted_color;
 }
 
+constexpr int16_t routes_top = 44;
+constexpr int16_t routes_bottom = 196;
+
 void draw_routes_values(uint32_t now)
 {
-    char line[40];
-    int16_t y = 44;
+    page_line_count = 0;
     const mesh_radio::state mesh = mesh_radio::current();
-    uint16_t color = listen_color;
     if (mesh_switched_off)
     {
-        snprintf(line, sizeof(line), "Mesh: off (Tools: Rejoin mesh)");
-        color = talk_color;
+        page_add(talk_color, false, "Mesh: off (Tools: Rejoin mesh)");
     }
     else if (mesh == mesh_radio::state::failed)
     {
-        snprintf(line, sizeof(line), "Mesh: ERR at %s",
+        page_add(talk_color, false, "Mesh: ERR at %s",
             mesh_radio::failed_step());
-        color = talk_color;
     }
     else if (mesh == mesh_radio::state::connected && mesh_radio::is_root())
     {
-        snprintf(line, sizeof(line), "Mesh: root, %d board%s",
+        page_add(listen_color, false, "Mesh: root, %d board%s",
             mesh_radio::nodes(), mesh_radio::nodes() == 1 ? "" : "s");
     }
     else if (mesh == mesh_radio::state::connected)
     {
-        snprintf(line, sizeof(line), "Mesh: layer %d, parent Board %u",
+        page_add(listen_color, false, "Mesh: layer %d, parent Board %u",
             mesh_radio::layer(), mesh_radio::parent_board());
     }
     else
     {
-        snprintf(line, sizeof(line), "Mesh: ");
-        mesh_looking_text(line + 6, sizeof(line) - 6, "");
-        color = muted_color;
+        char looking[40];
+        mesh_looking_text(looking, sizeof(looking), "");
+        page_add(muted_color, false, "Mesh: %s", looking);
     }
-    draw_field(line, 8, y, 1, color, 224);
-    y += 12;
+    char line[40];
     int used = snprintf(line, sizeof(line), "Mesh children:");
     const uint32_t children = mesh_radio::children_boards();
     for (uint8_t id = 1; id <= max_id && used > 0 &&
@@ -1129,29 +1212,18 @@ void draw_routes_values(uint32_t now)
     {
         if (children & (1u << id))
         {
-            used += snprintf(line + used, sizeof(line) - used, " Board %u",
-                id);
+            used += snprintf(line + used, sizeof(line) - used, " %u", id);
         }
     }
-    if (!children && used > 0 && used < static_cast<int>(sizeof(line)))
-    {
-        snprintf(line + used, sizeof(line) - used, " none");
-    }
-    draw_field(line, 8, y, 1, ST77XX_WHITE, 224);
-    y += 18;
-    // Each other board: a heading, then a route per way (4 lines).
+    page_add(ST77XX_WHITE, false, "%s%s", line, children ? "" : " none");
+    // Each other board: a heading, then a route per way.
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
         if (!valid_peer(peer))
         {
             continue;
         }
-        if (y + 48 > 196)
-        {
-            break;  // More boards than fit; serial `routes` has them all.
-        }
-        draw_field(device_name(peer), 8, y, 1, highlight_color, 224);
-        y += 12;
+        page_add(highlight_color, true, "%s", device_name(peer));
         static const char *const names[] = {" Mesh   ", " Flood  ",
             " Routed "};
         const via links[] = {via::mesh, via::flood, via::routed};
@@ -1169,11 +1241,10 @@ void draw_routes_values(uint32_t now)
             {
                 snprintf(route, sizeof(route), "offline");
             }
-            snprintf(line, sizeof(line), "%s%s", names[i], route);
-            draw_field(line, 8, y, 1, route_color(route), 224);
-            y += 12;
+            page_add(route_color(route), false, "%s%s", names[i], route);
         }
     }
+    draw_page_lines(routes_top, routes_bottom, 12);
     used = snprintf(line, sizeof(line), "Blocked:");
     bool any = false;
     for (uint8_t id = 1; id <= max_id && used > 0 &&
@@ -1197,7 +1268,30 @@ void draw_routes_page(uint32_t now)
 {
     draw_title("Routes", title_color);
     draw_routes_values(now);
-    draw_hints(nullptr, "Orange: via a middleman  CANCEL: back");
+    draw_hints("Orange: via a middleman",
+        page_scroll_max ? "UP/DOWN: more   CANCEL: back" : "CANCEL: back");
+}
+
+void scroll_page(int direction, uint32_t now)
+{
+    const size_t step = page_shown > 2 ? page_shown / 2 : 1;
+    if (direction > 0)
+    {
+        page_scroll = page_scroll + step < page_scroll_max ?
+            page_scroll + step : page_scroll_max;
+    }
+    else
+    {
+        page_scroll = page_scroll > step ? page_scroll - step : 0;
+    }
+    if (shown == screen::status)
+    {
+        draw_status_values();
+    }
+    else
+    {
+        draw_routes_values(now);
+    }
 }
 
 // Connecting and request
@@ -1545,6 +1639,8 @@ void show(screen next, uint32_t now)
 {
     const uint32_t started = millis();
     shown = next;
+    page_scroll = 0;  // The Status and Routes pages open at the top.
+    page_drawn_layout = UINT32_MAX;
     lcd.fillScreen(ST77XX_BLACK);
     switch (next)
     {
@@ -1897,7 +1993,11 @@ void handle_press(button_id id, uint32_t now)
         break;
     case screen::status:
     case screen::routes:
-        if (id == button_id::cancel || id == button_id::confirm)
+        if (id == button_id::up || id == button_id::down)
+        {
+            scroll_page(id == button_id::down ? 1 : -1, now);
+        }
+        else if (id == button_id::cancel || id == button_id::confirm)
         {
             page = screen::menu;
         }
@@ -2147,6 +2247,13 @@ void print_ui(uint32_t now)
     {
         Serial.printf(" | \"%s\" (%s)", end_text(ui_calls().last_end()),
             ui_radio_label());
+    }
+    if (shown == screen::status || shown == screen::routes)
+    {
+        Serial.printf(" | lines %u-%u of %u",
+            static_cast<unsigned>(page_scroll + 1),
+            static_cast<unsigned>(page_scroll + page_shown),
+            static_cast<unsigned>(page_line_count));
     }
     if (notice_showing(now))
     {

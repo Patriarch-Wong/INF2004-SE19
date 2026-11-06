@@ -149,12 +149,14 @@ monitors first: an open monitor blocks the port.
 | `5B5F021600` | Board 1 | COM11 |
 | `5B5F021597` | Board 2 | COM4 |
 | `5B5F021589` | Board 3 (MAC `E0:72:A1:D9:A4:94`) | COM10 |
+| `5B42019238` | Board 4 (MAC `E0:72:A1:D8:0E:48`) | COM15 |
 
 ```powershell
 cd tested_parts\handset_broadcast_integration_test
 ~\.platformio\penv\Scripts\pio.exe run -e board1 -t upload --upload-port COM11
 ~\.platformio\penv\Scripts\pio.exe run -e board2 -t upload --upload-port COM4
 ~\.platformio\penv\Scripts\pio.exe run -e board3 -t upload --upload-port COM10
+~\.platformio\penv\Scripts\pio.exe run -e board4 -t upload --upload-port COM15
 ```
 
 Each board needs its own environment (`boardN`), or it stops with "Wrong

@@ -72,7 +72,7 @@ depend on the mesh, so they keep working throughout.
 | A node (not the root, no boards behind it) | Its dot turns grey within ~6.5 s (presence pings stop, or sends to it keep failing). A connection with it ends: **Connection lost**. Asking it ends with **Not reachable** |
 | A middleman (boards joined through it) | As above, and the boards behind it lose their parent and rejoin through any other board in range, by themselves |
 | **The root** | Its connections end as above. Every other board starts looking for a mesh; the **first board in the order still up takes over as root** after its turn (board 2 after 14 s, board 3 after 22 s), and the rest join it. Connect again once the dots are green |
-| Any board coming back | It looks for a mesh first and **joins the one that's there**, so there is never a second root. It doesn't take the root back: that only moves if the root goes down |
+| Any board coming back | It looks for a mesh first and **joins the one that's there**, so there is never a second root. It doesn't take the root back, except the board **chosen** as root (below), which joins and then takes the root back |
 
 **How the takeover works.** Every board starts as a node and looks for a
 mesh to join. It becomes the root only if it finds none, or its mesh has
@@ -89,11 +89,38 @@ board 1 down, board 2 takes over and board 3 joins it, before its own
 turn comes. Changing `mesh_root_id` changes who is first; every board must
 agree.
 
+**Choosing the root.** On any board, Tools → **Be mesh root** makes that
+board the root for every board, and it stays root:
+
+1. It becomes root at once.
+2. It tells every board over ESP-NOW, so even boards in another mesh hear
+   of it.
+3. The root in charge gives way and joins it. The others follow, since
+   their root moved.
+
+The chosen board is first in the takeover order from then on. If it goes
+down, the next board takes over as usual. When it comes back, it joins and
+then takes the root back. The choice lasts until another board is chosen,
+or until every board has been reset.
+
+While the chosen board keeps saying over ESP-NOW that it is root, every
+board **regroups under it**:
+
+- A board looking for a mesh looks again rather than become a second root.
+- A root without the chosen board in its mesh gives way and joins it, and
+  its boards follow.
+
+So moving the root never leaves the boards split into two meshes. If the
+chosen root's mesh can't be reached after 3 tries, 20 s apart, the usual
+takeover applies, and they try again every 2 minutes.
+
 **Two roots (a split).** If a board became root while out of range of the
 others, then comes back, there are two meshes. A root that nobody has
 joined for 30–45 s (`mesh_lonely_root_ms`, plus a random part so two lonely
 roots don't step down together) steps down and looks for another mesh to
-join, so the boards end up in one mesh again. This covers any split with up
+join, so the boards end up in one mesh again. It does this only if another
+board is in range (online over ESP-NOW). With none, it would find no mesh
+and take the root back, over and over. The chosen root never steps down. This covers any split with up
 to 3 boards. With 4 or more, two roots that both have boards joined would
 stay split until one of them goes down.
 
@@ -102,7 +129,25 @@ mesh that failed all restart the mesh for a moment, so none of them happens
 while voice is being sent or played; stepping down also waits until no
 connection is in progress. A restart takes the receive task out of
 `esp_mesh_recv()` first, because the mesh's stop deletes the queue it
-waits on.
+waits on, and the send task out of `esp_mesh_send()`.
+
+**Voice through the root.** Between two boards under the root (route
+`1 > 3 > 2`), ESP-MESH carries about 30 packets a second, and one send can
+take a few hundred ms. Voice is 50 frames a second, so:
+
+- **A send task:** frames go to the mesh from their own task, never from
+  the loop. Measured 2026-11-06: before this, the loop stalled, frames
+  were dropped, the screen hung on TALKING, and connections dropped.
+- **One packet per two frames:** each voice packet already carries the
+  frame before it, so over the mesh only every second frame is sent.
+  Every frame still arrives, at 25 packets a second, 20 ms later.
+  Measured: 500/500 frames intact both ways.
+- **Per-hop retries stay on:** voice keeps the mesh's own per-hop
+  retransmission (`MESH_TOS_P2P`). Without it (`MESH_TOS_DEF`), no voice
+  frame arrived at all between the two nodes.
+
+The `mesh` line shows `send queue full N, slowest send N ms`. A slow board
+(hundreds of ms) has a weak link to its parent: move it closer.
 
 ### What changed from handset_lora_integration_test
 
@@ -159,6 +204,9 @@ is:
 - `Looking; root in 9 s` (counting down to this board's takeover)
 - `Mesh off (Tools: Rejoin mesh)`
 
+**Status page scrolls:** with more boards than fit, a scroll bar shows on
+the right, and **UP/DOWN** move half a page.
+
 **Routes page:**
 - **This board:** root, or its layer and parent
 - **Root:** which board is root
@@ -176,7 +224,7 @@ setting is on, and the line above the hints confirms each change.
 | --- | --- |
 | `Rate: 1 Mbps` | Switch the ESP-NOW rate between 1 and 6 Mbit/s (set it the same on every board) |
 | `Leave mesh` / `Rejoin mesh` | Leave the mesh completely, as if this board were down (another takes over if it was root); then come back |
-| `Be mesh root` | Become a root now, for split tests (green dot while this board is root) |
+| `Be mesh root` | Make this board the root for every board, and keep it root: the others give way and join it (green dot while this board is root) |
 | `Mute mesh`, `Mute LoRa` | Drop everything that way, as out of range would, for link-loss tests |
 
 The connected (hold OK to talk) screen shows **the route** under the
@@ -220,6 +268,7 @@ doesn't. Run `pio device list`:
 | `5B5F021600` | Board 1 (preferred mesh root) | `/dev/cu.usbmodem5B5F0216001` |
 | `5B5F021597` | Board 2 | `/dev/cu.usbmodem5B5F0215971` |
 | `5B5F021589` | Board 3 (MAC `E0:72:A1:D9:A4:94`) | |
+| `5B42019238` | Board 4 (MAC `E0:72:A1:D8:0E:48`) | COM15 |
 
 On the PC this was first run on, that was COM11 = board 1, COM4 =
 board 2 and COM10 = board 3. The commands below use those; use your own.
@@ -297,7 +346,7 @@ the same:
 | T1 Link loss | Connected over the mesh. Board 2: Tools → **Mute mesh** → OK | Both show **Connection lost** within ~10 s. **Mute mesh** → OK again: board 2's dot turns green again on board 1's ESP-MESH list |
 | T2 Root down | Board 1 (root): Tools → **Leave mesh** → OK | Board 2's Routes page: `Mesh: Looking; root in N s`, then about 14 s later `Mesh: root, 1 board` |
 | T3 Root back | After T2, board 1: Tools → **Rejoin mesh** → OK | Board 1's Routes page: `Mesh: layer 2, parent Board 2`, never `Mesh: root` (it joins, there is never a second root). Connect 1 → 2 over ESP-MESH works |
-| T4 Split | Board 2 (a node): Tools → **Be mesh root** → OK | Two roots for a while; within about a minute the one nobody joined steps down and joins the other (Routes: one board `root`, the other `layer 2`) |
+| T4 Choose the root | Board 2 (a node): Tools → **Be mesh root** → OK | Within about 10 s board 2's Routes page shows `Mesh: root`, board 1's `parent Board 2`. A minute later board 2 is still root |
 | T5 One at a time | Connected over the mesh, try connecting over ESP-NOW or LoRa | Refused: `not reachable` notice and a low beep |
 | T6 Middleman | Board 3 on, placed so board 2 can't reach board 1 directly | Board 2's Routes page: `parent Board 3`. Board 3: `Children: Board 2`. Connected screen: `Route: 1 > 3 > 2, via Board 3` |
 | T7 Faster radio | If ESP-NOW voice shows `MISSING`: on **every** board Tools → **Rate: 1 Mbps** → OK (becomes `Rate: 6 Mbps`) | Fewer or no missing frames |
@@ -335,7 +384,7 @@ frame by frame (sender's log first, so run it both ways):
 | M7 `espnow` | ESP-NOW connect + 5 s voice still works in this build; mesh connect refused meanwhile |
 | M8 `reboot` | Board 2 reboots during a mesh connection: board 1 ends it; board 2 rejoins, new session, connects again |
 | M9 `rootdown` | The root goes down (`mesh off`): the other board logs `becoming the root` within 45 s; the old root comes back (`mesh on`) as a node under it, not a second root; both online; connect and a 5 s voice stream work |
-| M10 `split` | The node is forced to be a second root (`mesh root`): within 100 s one root, nobody having joined it, steps down and joins the other; both online; connect works |
+| M10 `choose` | The node is chosen as root (`mesh root`): the old root hears of it over ESP-NOW, gives way and joins it; 50 s later it is still root; both online; connect works |
 
 ### 6. More tests by hand (power and distance)
 
@@ -371,7 +420,7 @@ Everything from `handset_lora_integration_test` (`help` lists them), plus:
 | `mesh mute on\|off` | Drop every mesh frame sent and received, as out of range would (the mesh itself stays up), for link-loss tests |
 | `mesh off` | Leave the mesh completely, as if this board were down: no soft-AP, no forwarding. If it was the root, another takes over |
 | `mesh on` | Come back: look for the mesh and join it, as at boot (root only if none is found in this board's turn) |
-| `mesh root` | Force this board to be a root now. For split tests: if another root is up, the one nobody joins steps down within about a minute |
+| `mesh root` | Tools → Be mesh root: make this board the root for every board; the others give way and join it, and it stays root |
 | `accept`, `decline`, `disconnect` | Act on the connection in progress, over whichever radio |
 | `hello`, `talk [S]`, `test [S]`, `stop`, hold OK | Use the connection in progress, ESP-NOW or ESP-MESH |
 

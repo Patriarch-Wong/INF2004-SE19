@@ -284,32 +284,34 @@ def test_root_down():
         mesh_disconnect(down, up)
 
 
-def test_split():
-    print("M10 two roots: the one nobody joins steps down and joins the "
-          "other", flush=True)
+def test_choose():
+    print("M10 choose the root: the node becomes root, the old root gives "
+          "way and joins it, and it stays root", flush=True)
     wait_idle(B1, B2)
     _, root = mesh_role(B1)
     node, node_id = (B2, 2) if root == 1 else (B1, 1)
-    s1, s2 = B1.mark(), B2.mark()
-    node.send("mesh root")  # Leaves the mesh and forms a second one.
-    check(bool(node.wait(r"MESH started as root", 10,
-                         s2 if node is B2 else s1)),
-          f"board {node_id} forced to be a second root")
-    board, match = wait_any([
-        (B1, r"MESH joined \| parent 2 ", s1),
-        (B2, r"MESH joined \| parent 1 ", s2)], 100)
-    if not check(bool(match), "one root steps down and the boards are one "
-                              "mesh again (within 100 s)"):
-        return
-    stepped = B1 if board is B1 else B2
-    _, lonely = stepped.find(r"MESH root with nobody joined",
-                             s1 if stepped is B1 else s2)
-    check(bool(lonely), "it stepped down because nobody had joined it")
-    check(bool(B1.wait(r"MESH PEER 2 \(Board 2\) online", 20, s1) and
-               B2.wait(r"MESH PEER 1 \(Board 1\) online", 20, s2)),
-          "both online over the mesh again")
+    old, old_id = (B1, 1) if node is B2 else (B2, 2)
+    s_node, s_old = node.mark(), old.mark()
+    node.send("mesh root")  # Tools: Be mesh root.
+    check(bool(node.wait(r"MESH root chosen: this board", 5, s_node)),
+          f"board {node_id} chosen as root")
+    check(bool(old.wait(rf"MESH root chosen: Board {node_id} ", 10, s_old)),
+          f"board {old_id} heard of it over ESP-NOW")
+    check(bool(old.wait(rf"MESH giving way to Board {node_id}, the chosen "
+                        r"root", 15, s_old)),
+          f"board {old_id} gave way")
+    check(bool(old.wait(rf"MESH joined \| parent {node_id} ", 60, s_old)),
+          f"board {old_id} joined board {node_id}'s mesh")
+    time.sleep(50)  # Past the lonely-root wait (30-45 s).
+    check(mesh_role(node) == ("root", node_id),
+          f"board {node_id} is still the root 50 s later")
+    check(not node.find(r"MESH root with nobody joined", s_node)[1],
+          "the chosen root never stepped down")
+    check(bool(B1.wait(r"MESH PEER 2 \(Board 2\) online", 20, 0) and
+               B2.wait(r"MESH PEER 1 \(Board 1\) online", 20, 0)),
+          "both online over the mesh")
     wait_idle(B1, B2)
-    if check(mesh_connect(B1, B2, 1, 2), "connect after the merge"):
+    if check(mesh_connect(B1, B2, 1, 2), "connect under the chosen root"):
         mesh_disconnect(B1, B2)
 
 
@@ -323,7 +325,7 @@ TESTS = {
     "espnow": test_espnow,
     "reboot": test_reboot,
     "rootdown": test_root_down,
-    "split": test_split,
+    "choose": test_choose,
 }
 
 

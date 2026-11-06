@@ -3,6 +3,7 @@
 #include <esp_event.h>
 #include <esp_mac.h>
 #include <esp_mesh.h>
+#include <esp_timer.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -11,6 +12,7 @@
 #include <string.h>
 #include "app_config.h"
 #include "radio.h"
+#include "secure_message.h"
 
 namespace mesh_radio
 {
@@ -20,6 +22,14 @@ constexpr size_t note_queue_depth = 16;
 
 QueueHandle_t receive_queue = nullptr;
 QueueHandle_t note_queue = nullptr;
+// Frames for the send task.
+struct outgoing
+{
+    uint8_t mac[6];
+    uint8_t size;
+    uint8_t bytes[secure_message::max_frame_size];
+};
+QueueHandle_t send_queue = nullptr;
 mesh_cfg_t saved_config = {};
 bool initialized = false;  // start()'s one-time part worked.
 bool placeholder = false;
@@ -44,6 +54,14 @@ std::atomic<int> nodes_now{0};
 // restarts the mesh, whose stop deletes the queues that call waits on.
 std::atomic<bool> rx_pause{false};
 std::atomic<bool> rx_paused{false};
+// The same for the send task, out of esp_mesh_send().
+std::atomic<bool> tx_pause{false};
+std::atomic<bool> tx_paused{false};
+// By board ID: sends failed in a row, and millis() at the last good one.
+std::atomic<uint32_t> fail_runs[network_config::device_count + 1];
+std::atomic<uint32_t> last_ok_ms[network_config::device_count + 1];
+std::atomic<uint32_t> queue_full{0};
+std::atomic<uint32_t> slowest_send_us{0};
 std::atomic<uint32_t> sent{0};
 std::atomic<uint32_t> send_failed{0};
 std::atomic<uint32_t> received{0};
@@ -305,15 +323,96 @@ void receive_task(void *)
     }
 }
 
-// Returns once the receive task is out of esp_mesh_recv() and will stay
-// out: it sets rx_paused only after seeing rx_pause, at the top of its
-// loop.
+// Hands one frame to the mesh: from the send task, which may wait (for
+// room in the mesh's queue, up to mesh_send_wait_ms) where the loop must
+// not.
+void transmit(outgoing &item)
+{
+    mesh_addr_t to = {};
+    memcpy(to.addr, item.mac, 6);
+    mesh_data_t data = {};
+    data.data = item.bytes;
+    data.size = item.size;
+    data.proto = MESH_PROTO_BIN;
+    data.tos = MESH_TOS_P2P;  // Each hop retries, as ESP-NOW's MAC does.
+    // esp_mesh.h: to the root, no address and no flag; to any other board,
+    // its address and P2P (the root forwards it down if need be). The root
+    // is whichever board is root now, not the preferred one.
+    const uint8_t root = root_id.load();
+    const network_config::device *root_entry =
+        root ? radio::find_device(root) : nullptr;
+    const bool to_root = !root_role.load() && root_entry &&
+        memcmp(item.mac, root_entry->mac, 6) == 0;
+    const int64_t began = esp_timer_get_time();
+    esp_err_t result = ESP_OK;
+    for (uint32_t waited = 0;; waited += 2)
+    {
+        result = esp_mesh_send(to_root ? nullptr : &to, &data,
+            (to_root ? 0 : MESH_DATA_P2P) | MESH_DATA_NONBLOCK, nullptr, 0);
+        if (!busy(result) || waited >= app_config::mesh_send_wait_ms ||
+            tx_pause.load())
+        {
+            break;
+        }
+        vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    const uint32_t took =
+        static_cast<uint32_t>(esp_timer_get_time() - began);
+    uint32_t seen = slowest_send_us.load();
+    while (took > seen && !slowest_send_us.compare_exchange_weak(seen, took))
+    {
+    }
+    (result == ESP_OK ? sent : send_failed).fetch_add(1);
+    const network_config::device *peer = radio::find_device(item.mac);
+    if (!peer || peer->id > network_config::device_count)
+    {
+        return;
+    }
+    if (result == ESP_OK)
+    {
+        fail_runs[peer->id].store(0);
+        last_ok_ms[peer->id].store(millis());
+    }
+    else if (!busy(result))
+    {
+        fail_runs[peer->id].fetch_add(1);
+    }
+}
+
+// Takes frames from send() and hands them to the mesh, one at a time.
+void send_task(void *)
+{
+    static outgoing item;
+    for (;;)
+    {
+        if (tx_pause.load())
+        {
+            // A restart: what was waiting goes nowhere, so drop it.
+            xQueueReset(send_queue);
+            tx_paused.store(true);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            continue;
+        }
+        if (xQueueReceive(send_queue, &item,
+                pdMS_TO_TICKS(app_config::mesh_receive_wait_ms)) == pdTRUE)
+        {
+            transmit(item);
+        }
+    }
+}
+
+// Returns once the receive task is out of esp_mesh_recv() and the send
+// task out of esp_mesh_send(), and both will stay out: each sets its
+// paused flag only after seeing its pause flag, at the top of its loop.
 void pause_receiver()
 {
     rx_paused.store(false);
+    tx_paused.store(false);
     rx_pause.store(true);
+    tx_pause.store(true);
     const uint32_t limit_ms = 5 * app_config::mesh_receive_wait_ms;
-    for (uint32_t waited = 0; !rx_paused.load() && waited < limit_ms;
+    for (uint32_t waited = 0;
+         (!rx_paused.load() || !tx_paused.load()) && waited < limit_ms;
          waited += 5)
     {
         vTaskDelay(pdMS_TO_TICKS(5));
@@ -323,6 +422,7 @@ void pause_receiver()
 void resume_receiver()
 {
     rx_pause.store(false);
+    tx_pause.store(false);
 }
 
 const char *fail(const char *step, esp_err_t result)
@@ -375,10 +475,12 @@ const char *start(const char *password)
     esp_wifi_get_mac(WIFI_IF_STA, own_mac);
     const network_config::device *self = find_board(own_mac);
     own_board = self ? self->id : 0;
+    send_queue = xQueueCreate(app_config::mesh_tx_queue_depth,
+        sizeof(outgoing));
     receive_queue = xQueueCreate(app_config::mesh_rx_queue_depth,
         sizeof(received_frame));
     note_queue = xQueueCreate(note_queue_depth, sizeof(note));
-    if (!receive_queue || !note_queue)
+    if (!send_queue || !receive_queue || !note_queue)
     {
         return fail("queues", ESP_ERR_NO_MEM);
     }
@@ -433,6 +535,12 @@ const char *start(const char *password)
             nullptr, app_config::mesh_core) != pdPASS)
     {
         return fail("receive task", ESP_ERR_NO_MEM);
+    }
+    if (xTaskCreatePinnedToCore(send_task, "mesh_tx",
+            app_config::mesh_task_stack, nullptr, app_config::mesh_priority,
+            nullptr, app_config::mesh_core) != pdPASS)
+    {
+        return fail("send task", ESP_ERR_NO_MEM);
     }
     initialized = true;
     // Always a node first: a board that finds a mesh joins it rather than
@@ -627,30 +735,31 @@ const network_config::device *find_board(const uint8_t *mac)
 
 esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size)
 {
+    const network_config::device *peer = radio::find_device(mac);
     if (current() != state::connected)
     {
         send_failed.fetch_add(1);
+        if (peer && peer->id <= network_config::device_count)
+        {
+            fail_runs[peer->id].fetch_add(1);
+        }
         return ESP_ERR_MESH_DISCONNECTED;
     }
-    mesh_addr_t to = {};
-    memcpy(to.addr, mac, 6);
-    mesh_data_t data = {};
-    data.data = const_cast<uint8_t *>(frame);
-    data.size = static_cast<uint16_t>(size);
-    data.proto = MESH_PROTO_BIN;
-    data.tos = MESH_TOS_P2P;  // Each hop retries, as ESP-NOW's MAC does.
-    // esp_mesh.h: to the root, no address and no flag; to any other board,
-    // its address and P2P (the root forwards it down if need be). The root
-    // is whichever board is root now, not the preferred one.
-    const uint8_t root = root_id.load();
-    const network_config::device *root_entry =
-        root ? radio::find_device(root) : nullptr;
-    const bool to_root = !root_role.load() && root_entry &&
-        memcmp(mac, root_entry->mac, 6) == 0;
-    const esp_err_t result = esp_mesh_send(to_root ? nullptr : &to, &data,
-        (to_root ? 0 : MESH_DATA_P2P) | MESH_DATA_NONBLOCK, nullptr, 0);
-    (result == ESP_OK ? sent : send_failed).fetch_add(1);
-    return result;
+    outgoing item;
+    if (size > sizeof(item.bytes))
+    {
+        send_failed.fetch_add(1);
+        return ESP_ERR_MESH_ARGUMENT;
+    }
+    memcpy(item.mac, mac, 6);
+    item.size = static_cast<uint8_t>(size);
+    memcpy(item.bytes, frame, size);
+    if (!send_queue || xQueueSend(send_queue, &item, 0) != pdTRUE)
+    {
+        queue_full.fetch_add(1);
+        return ESP_ERR_MESH_QUEUE_FULL;  // busy(): try again later.
+    }
+    return ESP_OK;
 }
 
 bool busy(esp_err_t result)
@@ -674,6 +783,16 @@ counters stats()
 {
     return {sent.load(), send_failed.load(), received.load(), rx_drops.load(),
         unknown_drops.load(), parent_joins.load(), parent_losses.load(),
-        router_misses.load(), restarts.load()};
+        router_misses.load(), restarts.load(), queue_full.load(),
+        slowest_send_us.load()};
+}
+
+send_record sends_to(uint8_t id)
+{
+    if (id > network_config::device_count)
+    {
+        return {0, 0};
+    }
+    return {fail_runs[id].load(), last_ok_ms[id].load()};
 }
 }

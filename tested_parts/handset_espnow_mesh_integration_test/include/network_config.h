@@ -50,7 +50,8 @@ constexpr device devices[] = {
     // The e2e tests' board 3, E0:72:A1:D7:F6:50, was board 3 before; put it
     // in a free slot to use it.
     {3, {0xE0, 0x72, 0xA1, 0xD9, 0xA4, 0x94}, "Board 3"},
-    {4, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, "Board 4"},  // MAC not set.
+    // Given by the user on 2026-11-06 (the board on USB serial 5B42019238).
+    {4, {0xE0, 0x72, 0xA1, 0xD8, 0x0E, 0x48}, "Board 4"},
     {5, {0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, "Board 5"},  // MAC not set.
 };
 constexpr size_t device_count = sizeof(devices) / sizeof(devices[0]);

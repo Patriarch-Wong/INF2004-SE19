@@ -12,6 +12,7 @@
 #include <freertos/task.h>
 #include <atomic>
 #include <ctype.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>

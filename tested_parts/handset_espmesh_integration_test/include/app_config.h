@@ -277,6 +277,10 @@ constexpr uint32_t mesh_task_stack = 4096;
 constexpr int mesh_core = 0;
 constexpr unsigned mesh_priority = 3;
 constexpr unsigned mesh_rx_queue_depth = 32;
+// Frames waiting for the mesh send task (mesh_radio.cpp), and how long it
+// waits for room in the mesh's own queue before dropping one.
+constexpr unsigned mesh_tx_queue_depth = 24;
+constexpr uint32_t mesh_send_wait_ms = 60;
 // Used only if this IDF refuses an empty router SSID: a router name that
 // does not exist, so the root still never joins anything.
 constexpr char mesh_placeholder_router[] = "SE19-NO-ROUTER";
@@ -300,6 +304,17 @@ constexpr uint32_t mesh_lonely_root_ms = 30000;
 constexpr uint32_t mesh_lonely_jitter_ms = 15000;
 // A mesh that failed to (re)start is tried again this often.
 constexpr uint32_t mesh_retry_ms = 10000;
+// The board chosen as root (Tools: Be mesh root) is told to every board
+// over ESP-NOW again this often, in case a frame was lost.
+constexpr uint32_t mesh_choice_repeat_ms = 10000;
+// The chosen root counts as up for this long after it last said so.
+constexpr uint32_t mesh_chosen_fresh_ms = 30000;
+// Restarts to regroup under it: at most this often; after this many in a
+// row without reaching its mesh, the usual takeover applies and they try
+// again only this often.
+constexpr uint32_t mesh_regroup_gap_ms = 20000;
+constexpr uint32_t mesh_regroup_tries = 3;
+constexpr uint32_t mesh_regroup_rest_ms = 120000;
 // No-parent-found reports are logged at most this often.
 constexpr uint32_t mesh_no_parent_log_ms = 10000;
 }

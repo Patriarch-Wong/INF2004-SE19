@@ -78,6 +78,17 @@ struct counters
     uint32_t parent_losses;
     uint32_t router_misses;  // Root: looks for the absent router.
     uint32_t restarts;       // restart() and stop() calls.
+    uint32_t queue_full;     // Refused by send(): its queue was full.
+    uint32_t slowest_send_us;  // Longest esp_mesh_send(), with its waits.
+};
+
+// Sends to one board: how many failed in a row (a good one resets it),
+// and millis() at the last good one. Kept by the send task, as
+// radio::acks() is for ESP-NOW.
+struct send_record
+{
+    uint32_t failures;
+    uint32_t last_ok_ms;
 };
 
 // Sets the mesh up and starts it as a node, looking for a mesh to join.
@@ -123,9 +134,12 @@ esp_err_t last_error();
 // esp_read_mac() does). Null if not listed.
 const network_config::device *find_board(const uint8_t *mac);
 
-// Sends to the board with this station MAC, without blocking. ESP_OK only
-// says the mesh queued it.
+// Sends to the board with this station MAC, without blocking: a send task
+// hands it to the mesh, so the loop never waits on it. ESP_OK only says it
+// was queued; busy() results mean the queue is full.
 esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size);
+// How sends to board `id` are going (send_record).
+send_record sends_to(uint8_t id);
 // The mesh's queues are full: try again later rather than counting a loss.
 bool busy(esp_err_t result);
 

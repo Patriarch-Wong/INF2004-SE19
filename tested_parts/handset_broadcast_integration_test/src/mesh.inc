@@ -30,8 +30,6 @@
 // (peer_state), how sends to it are going, and where it hangs.
 struct mesh_peer : peer_state
 {
-    uint32_t send_failures = 0;     // In a row; a send that works resets.
-    uint32_t last_send_ok_ms = 0;
     // Where the board hangs in the mesh, from its last presence ping: its
     // parent (0 for the root) and layer. For the route on screen.
     bool placed = false;
@@ -66,8 +64,8 @@ bool mesh_can_send(uint8_t peer)
 // (acks_lost).
 bool mesh_sends_failing(uint8_t peer, uint32_t now)
 {
-    const mesh_peer &state = mesh_peers[peer];
-    return sends_failing(state.send_failures, state.last_send_ok_ms, now);
+    const mesh_radio::send_record sends = mesh_radio::sends_to(peer);
+    return sends_failing(sends.failures, sends.last_ok_ms, now);
 }
 
 // A mesh session is up, something from the board opened recently, and
@@ -237,7 +235,8 @@ void mesh_reject(const mesh_radio::received_frame &frame, const char *reason)
     log_reject("MESH ", mesh_rejected, frame.mac, frame.size, reason);
 }
 
-// Every mesh frame goes out here: mute, and the run of failures per peer.
+// Every mesh frame goes out here: mute. The send task keeps each peer's
+// run of failures (mesh_radio::sends_to()).
 esp_err_t mesh_transmit(uint8_t peer, const uint8_t *frame, size_t size)
 {
     if (mesh_muted)
@@ -245,19 +244,7 @@ esp_err_t mesh_transmit(uint8_t peer, const uint8_t *frame, size_t size)
         ++mesh_muted_tx;
         return ESP_OK;  // Gone, as out of range: presence and timeouts notice.
     }
-    const esp_err_t result = mesh_radio::send(radio::find_device(peer)->mac,
-        frame, size);
-    mesh_peer &state = mesh_peers[peer];
-    if (result == ESP_OK)
-    {
-        state.send_failures = 0;
-        state.last_send_ok_ms = millis();
-    }
-    else if (!mesh_radio::busy(result))
-    {
-        ++state.send_failures;
-    }
-    return result;
+    return mesh_radio::send(radio::find_device(peer)->mac, frame, size);
 }
 
 void mesh_send_control(uint8_t destination,
@@ -469,20 +456,30 @@ void service_mesh_presence(uint32_t now)
 // Root failover
 //
 // The mesh needs exactly one root, and with no router nobody can vote for
-// one, so the boards take turns in a fixed order: the preferred root
-// (network_config::mesh_root_id), then the other listed boards by ID. A
-// board always starts as a node and looks for a mesh to join. If it finds
-// none, or its mesh lost its root, for its turn's wait (app_config
-// mesh_root_wait_ms plus mesh_root_wait_step_ms per place), it restarts as
-// the root and the others join it. So:
+// one, so the boards take turns in a fixed order: the preferred root, then
+// the other listed boards by ID. The preferred root is
+// network_config::mesh_root_id until a board is chosen on its Tools page
+// (Be mesh root): that board becomes root, every board hears of it over
+// ESP-NOW (so a split mesh does too), the root in charge gives way and
+// joins it, and it stays root. A board always starts as a node and looks
+// for a mesh to join. If it finds none, or its mesh lost its root, for its
+// turn's wait (app_config mesh_root_wait_ms plus mesh_root_wait_step_ms per
+// place), it restarts as the root and the others join it. So:
 //   - all boards on together: the preferred root forms the mesh first;
 //   - the root goes down: the first board in the order still up takes over
 //     and the rest join it; connections over the mesh end ("Connection
 //     lost") and can be made again once it has;
-//   - a board comes back: it finds the mesh and joins, never a second root;
+//   - a board comes back: it finds the mesh and joins, never a second root
+//     (the chosen root takes the root back once it has rejoined);
+//   - while the chosen root says it is root, every board regroups under
+//     it: one looking for a mesh looks again rather than take over, and a
+//     root without it in its mesh (a split) gives way and joins it. If its
+//     mesh can't be reached after mesh_regroup_tries, the usual takeover
+//     applies, and they try again every mesh_regroup_rest_ms;
 //   - two roots anyway (one became root out of range of the others): the
 //     one nobody joins steps down after mesh_lonely_root_ms and joins the
-//     other mesh.
+//     other mesh, if another board is in ESP-NOW range to merge with. The
+//     chosen root never steps down.
 // A restart stops the mesh for a moment, so none starts while voice plays
 // or is sent; the lonely-root one also waits for every connection to end.
 
@@ -493,27 +490,194 @@ bool mesh_alone = false;         // Root, nobody joined since mesh_alone_since.
 uint32_t mesh_alone_since = 0;
 uint32_t mesh_alone_limit = 0;
 bool mesh_yield_asked = false;   // Another root asked this one to give way.
+bool mesh_give_way = false;      // A board was chosen as root; not this one.
 uint32_t mesh_last_restart_ms = 0;
 uint32_t mesh_no_parent_logged_ms = 0;
 bool mesh_no_parent_logged = false;
+
+// The preferred root: network_config::mesh_root_id, or the board chosen
+// on a Tools page. Every board keeps the newest choice it heard of: the
+// higher choice number, then the lower board ID (two chosen at once).
+uint8_t mesh_root_choice = network_config::mesh_root_id;
+uint32_t mesh_choice_number = 0;  // 0: none made since boot.
+// When each board was last told of the choice, and under which of its
+// ESP-NOW sessions (a board that rebooted is told again).
+uint32_t mesh_choice_session[max_id + 1] = {};
+uint32_t mesh_choice_told_ms[max_id + 1] = {};
+// Kind, board, number, flags: bit 0, the sender is the chosen board and is
+// root now.
+constexpr size_t mesh_choice_size = 1 + 1 + 4 + 1;
+constexpr uint8_t mesh_choice_is_root = 1;
+// The chosen root (another board) last said, itself, that it is root.
+bool mesh_chosen_heard = false;
+uint32_t mesh_chosen_root_ms = 0;
+// Restarts to regroup under it: the last, and how many in a row did not
+// reach its mesh.
+uint32_t mesh_regroup_ms = 0;
+uint32_t mesh_regroups = 0;
 
 // Place in the takeover order: 0 for the preferred root, then the other
 // listed boards by ID.
 uint32_t mesh_rank(uint8_t id)
 {
-    if (id == network_config::mesh_root_id)
+    if (id == mesh_root_choice)
     {
         return 0;
     }
     uint32_t rank = 1;
     for (uint8_t other = 1; other < id; ++other)
     {
-        if (other != network_config::mesh_root_id && radio::find_device(other))
+        if (other != mesh_root_choice && radio::find_device(other))
         {
             ++rank;
         }
     }
     return rank;
+}
+
+// This board was chosen as root on a Tools page (here, or on a board that
+// told it): not just first in the default order.
+bool mesh_is_chosen_root()
+{
+    return mesh_choice_number > 0 && mesh_root_choice == own_id;
+}
+
+// Some other board is online over ESP-NOW: in range, so maybe in another
+// mesh this one could merge with.
+bool any_board_online(uint32_t now)
+{
+    for (uint8_t peer = 1; peer <= max_id; ++peer)
+    {
+        if (valid_peer(peer) && peer_online(peer, now))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Tells every board online over ESP-NOW which board is chosen as root:
+// once under each session, and again every mesh_choice_repeat_ms. Nothing
+// while no board has been chosen (all boards start with the same one).
+void service_mesh_choice(uint32_t now)
+{
+    if (mesh_choice_number == 0)
+    {
+        return;
+    }
+    for (uint8_t peer = 1; peer <= max_id; ++peer)
+    {
+        if (!valid_peer(peer) || !peer_online(peer, now))
+        {
+            continue;
+        }
+        const uint32_t session = peers[peer].link.session_id();
+        if (mesh_choice_session[peer] == session &&
+            now - mesh_choice_told_ms[peer] <
+                app_config::mesh_choice_repeat_ms)
+        {
+            continue;
+        }
+        uint8_t payload[mesh_choice_size];
+        payload[0] = kind_mesh_root;
+        payload[1] = mesh_root_choice;
+        for (size_t i = 0; i < 4; ++i)
+        {
+            payload[2 + i] =
+                static_cast<uint8_t>(mesh_choice_number >> (8 * i));
+        }
+        payload[6] = mesh_root_choice == own_id && mesh_radio::is_root() &&
+            mesh_ready() ? mesh_choice_is_root : 0;
+        if (send_payload(peer, payload, sizeof(payload)) == ESP_OK)
+        {
+            mesh_choice_session[peer] = session;
+            mesh_choice_told_ms[peer] = now;
+        }
+    }
+}
+
+void mesh_force_root(uint32_t now);
+
+bool take_mesh_choice(uint8_t source, const uint8_t *payload, size_t size)
+{
+    if (voice_link::kind(payload, size) != kind_mesh_root)
+    {
+        return false;
+    }
+    // The earlier build sent no flags byte.
+    if (size != mesh_choice_size && size != mesh_choice_size - 1)
+    {
+        return true;
+    }
+    const uint8_t flags = size == mesh_choice_size ? payload[6] : 0;
+    const uint8_t chosen = payload[1];
+    uint32_t number = 0;
+    for (size_t i = 0; i < 4; ++i)
+    {
+        number |= static_cast<uint32_t>(payload[2 + i]) << (8 * i);
+    }
+    if (chosen != own_id && !valid_peer(chosen))
+    {
+        return true;
+    }
+    const bool newer = number > mesh_choice_number ||
+        (number == mesh_choice_number && chosen < mesh_root_choice);
+    if (newer)
+    {
+        mesh_root_choice = chosen;
+        mesh_choice_number = number;
+        mesh_chosen_heard = false;
+        mesh_regroups = 0;
+        // Pass it on to every board but the one it came from.
+        memset(mesh_choice_session, 0, sizeof(mesh_choice_session));
+        mesh_choice_session[source] = peers[source].link.session_id();
+        mesh_choice_told_ms[source] = millis();
+        Serial.printf("MESH root chosen: Board %u (choice %lu, from Board "
+                      "%u)\n",
+            chosen, static_cast<unsigned long>(number), source);
+        // The chosen board itself, told after a reboot, takes the root back
+        // (service_mesh_failover); any other root gives way.
+        mesh_give_way = chosen != own_id && mesh_radio::is_root();
+    }
+    // Only the chosen board can say it is root: another board's copy of the
+    // choice says nothing about that.
+    if (source == mesh_root_choice && (flags & mesh_choice_is_root))
+    {
+        mesh_chosen_heard = true;
+        mesh_chosen_root_ms = millis();
+    }
+    return true;
+}
+
+// The chosen root, another board, said lately that it is root: it is up,
+// so this board regroups under it rather than take over.
+bool mesh_chosen_up(uint32_t now)
+{
+    return mesh_root_choice != own_id && mesh_chosen_heard &&
+        now - mesh_chosen_root_ms < app_config::mesh_chosen_fresh_ms;
+}
+
+// A restart to regroup under the chosen root is due: at most every
+// mesh_regroup_gap_ms, and after mesh_regroup_tries in a row that did not
+// reach its mesh, every mesh_regroup_rest_ms.
+bool mesh_regroup_due(uint32_t now)
+{
+    return now - mesh_regroup_ms >=
+        (mesh_regroups < app_config::mesh_regroup_tries ?
+            app_config::mesh_regroup_gap_ms :
+            app_config::mesh_regroup_rest_ms);
+}
+
+void mesh_restart(bool root, uint32_t now);
+
+void mesh_regroup(const char *why, uint32_t now)
+{
+    mesh_regroup_ms = now;
+    ++mesh_regroups;
+    Serial.printf("MESH %s while Board %u, the chosen root, is up: looking "
+                  "for its mesh (try %lu)\n",
+        why, mesh_root_choice, static_cast<unsigned long>(mesh_regroups));
+    mesh_restart(false, now);
 }
 
 uint32_t mesh_takeover_wait_ms()
@@ -556,6 +720,7 @@ void mesh_restart(bool root, uint32_t now)
     mesh_looking = false;
     mesh_alone = false;
     mesh_yield_asked = false;
+    mesh_give_way = false;
     const uint32_t began = millis();
     const char *error = mesh_radio::restart(root);
     Serial.printf("MESH restarted as %s in %lu ms%s%s\n", root ? "root" : "node",
@@ -587,6 +752,12 @@ void service_mesh_failover(uint32_t now)
     {
         return;  // Between a restart's stop and its start.
     }
+    // In the chosen root's mesh (or the chosen root, as root): regrouped.
+    if (mesh_ready() && !mesh_radio::rootless() &&
+        mesh_radio::root_board() == mesh_root_choice)
+    {
+        mesh_regroups = 0;
+    }
     // Takeover: no mesh with a root for this board's turn's wait.
     const bool looking = mesh_without_root();
     if (looking && !mesh_looking)
@@ -600,6 +771,17 @@ void service_mesh_failover(uint32_t now)
     }
     if (mesh_looking && mesh_takeover_in_ms(now) == 0 && !mesh_voice_running())
     {
+        // The chosen root is up: look for its mesh again rather than become
+        // a second root, unless that has failed mesh_regroup_tries times.
+        if (mesh_chosen_up(now) &&
+            mesh_regroups < app_config::mesh_regroup_tries)
+        {
+            if (mesh_regroup_due(now))
+            {
+                mesh_regroup("no mesh with a root found", now);
+            }
+            return;
+        }
         Serial.printf("MESH no mesh with a root for %lu s (this board's turn "
                       "comes after %lu s): becoming the root\n",
             static_cast<unsigned long>((now - mesh_looking_since) / 1000),
@@ -607,10 +789,14 @@ void service_mesh_failover(uint32_t now)
         mesh_restart(true, now);
         return;
     }
-    // A root with nobody joined: maybe there is another mesh to join.
+    // A root with nobody joined: maybe there is another mesh to join, if a
+    // board is in range (online over ESP-NOW). With none, stepping down
+    // would only find no mesh and take the root back, over and over. The
+    // chosen root stays: the others give way to it.
     const bool alone = state == mesh_radio::state::connected &&
         mesh_radio::is_root() && mesh_radio::children() == 0 &&
-        mesh_radio::nodes() <= 1;
+        mesh_radio::nodes() <= 1 && !mesh_is_chosen_root() &&
+        any_board_online(now);
     if (alone && !mesh_alone)
     {
         mesh_alone = true;
@@ -632,10 +818,41 @@ void service_mesh_failover(uint32_t now)
         mesh_restart(false, now);
         return;
     }
+    if (mesh_give_way && mesh_radio::is_root() && !mesh_voice_running())
+    {
+        Serial.printf("MESH giving way to Board %u, the chosen root: joining "
+                      "its mesh\n",
+            mesh_root_choice);
+        mesh_restart(false, now);
+        return;
+    }
     if (mesh_yield_asked && mesh_radio::is_root() && !mesh_voice_running())
     {
         Serial.println("MESH giving way to the other root: joining its mesh");
         mesh_restart(false, now);
+        return;
+    }
+    const bool idle = !any_connection() && !mesh_voice_running();
+    // A root that isn't the chosen one, without it in its mesh, while it is
+    // up: two meshes, so this one gives way and its boards follow.
+    if (mesh_radio::is_root() && mesh_chosen_up(now) &&
+        !mesh_peer_online(mesh_root_choice, now) && mesh_regroup_due(now) &&
+        idle)
+    {
+        mesh_regroup("root of another mesh", now);
+        return;
+    }
+    // The chosen board is a node (it rebooted, or rejoined): once in a mesh
+    // and nothing is in progress, it takes the root back.
+    if (mesh_root_choice == own_id && mesh_choice_number > 0 &&
+        !mesh_radio::is_root() && mesh_ready() && mesh_regroup_due(now) &&
+        idle)
+    {
+        mesh_regroup_ms = now;
+        ++mesh_regroups;
+        Serial.println("MESH this board is the chosen root: taking the root "
+                       "back");
+        mesh_force_root(now);
     }
 }
 
@@ -722,6 +939,12 @@ void print_mesh_note(const mesh_radio::note &item)
             item.value);
         break;
     case note_kind::asked_to_yield:
+        if (mesh_is_chosen_root())
+        {
+            Serial.println("MESH another root asks this one to give way: "
+                           "staying, this board is the chosen root");
+            break;
+        }
         mesh_yield_asked = true;
         Serial.println("MESH another root asks this one to give way");
         break;
@@ -795,7 +1018,9 @@ void print_mesh()
     }
     Serial.printf(" | sent %lu failed %lu | received %lu dropped %lu unknown "
                   "%lu | accepted %lu rejected %lu | parent joins %lu losses "
-                  "%lu | router misses %lu | restarts %lu%s",
+                  "%lu | router misses %lu | restarts %lu | send queue "
+                  "full %lu, slowest send %lu ms | root choice Board %u "
+                  "(#%lu)%s",
         static_cast<unsigned long>(c.sent),
         static_cast<unsigned long>(c.send_failed),
         static_cast<unsigned long>(c.received),
@@ -807,6 +1032,9 @@ void print_mesh()
         static_cast<unsigned long>(c.parent_losses),
         static_cast<unsigned long>(c.router_misses),
         static_cast<unsigned long>(c.restarts),
+        static_cast<unsigned long>(c.queue_full),
+        static_cast<unsigned long>(c.slowest_send_us / 1000),
+        mesh_root_choice, static_cast<unsigned long>(mesh_choice_number),
         mesh_muted ? " | MUTED" : "");
     Serial.print(" | sessions");
     print_sessions(via::mesh, now);
@@ -906,6 +1134,7 @@ void service_mesh(uint32_t now)
         service_sessions(via::mesh, now, true);
     }
     service_mesh_presence(now);
+    service_mesh_choice(now);
     service_calls(via::mesh, now);
 }
 
@@ -941,14 +1170,23 @@ void mesh_rejoin(uint32_t now)
     mesh_restart(false, now);
 }
 
-// Makes this board a root now: a second root, if another is up, until the
-// one nobody joins steps down.
+// Makes this board the mesh root, for every board: it becomes root (if it
+// isn't), the others hear of it over ESP-NOW and give way, and it stays
+// root, first in the takeover order, until another board is chosen.
 void mesh_force_root(uint32_t now)
 {
     mesh_switched_off = false;
-    mesh_restart(true, now);
-    Serial.println("MESH forced to be a root: if another root is up, the one "
-                   "nobody joins steps down within about a minute");
+    mesh_root_choice = own_id;
+    ++mesh_choice_number;
+    mesh_chosen_heard = false;
+    memset(mesh_choice_session, 0, sizeof(mesh_choice_session));
+    Serial.printf("MESH root chosen: this board (choice %lu) | the other "
+                  "boards give way and join it\n",
+        static_cast<unsigned long>(mesh_choice_number));
+    if (!mesh_radio::is_root() || !mesh_ready())
+    {
+        mesh_restart(true, now);
+    }
 }
 
 // Serial commands. accept, decline and disconnect act on the mesh
