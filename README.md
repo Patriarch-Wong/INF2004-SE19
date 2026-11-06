@@ -49,7 +49,8 @@ INF2004-SE19/
     ├── handset_espmesh_integration_test/ handset_lora_integration_test plus ESP-MESH (no router) voice connections
     ├── handset_espnow_mesh_integration_test/ handset_espmesh_integration_test plus ESP-NOW flood mesh and routed relay
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
-    └── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
+    ├── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
+    └── radio_sniffer/        Keyless passive ESP-NOW + LoRa capture, never transmits
 ```
 
 Every directory containing a `platformio.ini` is an independent project with
@@ -122,6 +123,9 @@ its [README](esp32_s3n16r8_template/README.md).
 | [espnow_test](tested_parts/espnow_test/) | Two-way reception confirmed; unknown-device rejection not tested with this firmware (tested in `e2e_security_test` stage 2) |
 | [espnow_encrypt_test](tested_parts/espnow_encrypt_test/) | Hardware-tested: encrypted two-way exchange; wrong-key and plaintext senders rejected; recovery after restore |
 | [espnow_sd_test](tested_parts/espnow_sd_test/) | 4096-byte transfer passed with SD read-back, CRC32, zero queue drops |
+| [espcam_ov5640_test](tested_parts/espcam_ov5640_test/) | Builds for ESP32-S3 CAM (UART and USB) and AI-Thinker ESP32-CAM; hardware self-test PASS on the S3 CAM board (OV5640 detected, 10/10 sizes QVGA–5 MP valid, 4.5 fps at 5 MP); USB live view not yet confirmed |
+| [espcam_espnow_video_test](tested_parts/espcam_espnow_video_test/) | Encrypted OV5640 video to a 240×240 LCD over ESP-NOW; builds and host tests (handshake, 21-chunk frame rebuild, replay, tamper, wrong key, reboot) pass; not yet hardware-tested |
+| [espcam_espnow_live_test](tested_parts/espcam_espnow_live_test/) | Low-lag redo of the camera link, no encryption (160×120, 6 Mbps, newest frame only); host tests pass; user confirmed a good, smooth stream on hardware (no measurements recorded) |
 | [lora_test](tested_parts/lora_test/) | Changed from PING/PONG (hardware-confirmed) to broadcast send and receive; broadcast version not yet hardware-tested |
 | [lcd_lora_test](tested_parts/lcd_lora_test/) | LCD and LoRa together, no menu: radio state, hello/bye texts, RSSI on screen; builds; not yet hardware-tested |
 | [lora_encrypt_test](tested_parts/lora_encrypt_test/) | Direct AES-256-GCM serial chat, no relays; builds and host crypto tests pass; user confirmed working on hardware |
@@ -132,6 +136,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [handset_espmesh_integration_test](tested_parts/handset_espmesh_integration_test/) | handset_lora_integration_test plus ESP-MESH: Menu → ESP-MESH → board, accept/decline, hold OK to talk, RIGHT hello, all encrypted, as over ESP-NOW; no router (board 1 is the preferred mesh root; if it is down the next board takes over); all five environments build; not yet hardware-tested (`tools/mesh_test.py` ready) |
 | [handset_espnow_mesh_integration_test](tested_parts/handset_espnow_mesh_integration_test/) | handset_espmesh_integration_test plus the same connections, voice and hello over ESP-NOW with every board relaying, two ways: flood mesh (re-broadcast) and routed relay (route discovery, hop-by-hop unicast); route shown on screen; no router, no root; builds; not yet hardware-tested (`tools/relay_test.py` ready) |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
+| [radio_sniffer](tested_parts/radio_sniffer/) | Hardware-tested (ESP-NOW): keyless capture of 3,978 frames from four broadcast handsets, 0 drops; host `decrypt_check` with the shared keys: every hop/route tag passes, 8 handshakes rebuilt, 756 session frames and 506 broadcasts opened, 0 bad. LoRa capture not yet hardware-tested |
 | [opus_broadcast_test](tested_parts/opus_broadcast_test/) | Hardware-tested: each of three boards broadcast plain and redundant 60 s Opus streams to the other two; 2 of 36,000 frames lost, the redundant one recovered; 0 late at 60–300 ms; 0.9989 / 26.73 dB played; no encryption or authentication |
 
 Detailed logs and measurements are in each project's README and `results/`
