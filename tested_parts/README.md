@@ -36,6 +36,11 @@ README has the full procedure and measurements.
 | [lcd_lora_test](lcd_lora_test/) | ST7789 LCD and Core1121 LoRa on separate SPI buses, no menu: hello/bye texts both ways at 915 MHz, radio state, counts and RSSI on screen |
 | [lora_test](lora_test/) | Core1121 868 MHz LoRa broadcast send and receive |
 | [lora_encrypt_test](lora_encrypt_test/) | Direct encrypted two-way LoRa serial chat; no relays |
+| [espcam_ov5640_test](espcam_ov5640_test/) | OV5640 on an ESP32 camera board: sensor ID, JPEG self-test QVGA to 5 MP, live view and snapshots over the USB cable (ffplay window, no Wi-Fi) |
+| [espcam_espnow_video_test](espcam_espnow_video_test/) | OV5640 board 1 sends small JPEG frames (240×240) to board 2's ST7789 LCD over ESP-NOW, every chunk sealed with the 1-2 session key (AES-GCM, replay window) |
+| [espcam_espnow_live_test](espcam_espnow_live_test/) | From-scratch, low-lag redo, no encryption: newest 160×120 frame at 6 Mbps, scaled up on the 240×240 LCD, no playback buffer |
+| [espcam_espnow_live_encrypted_test](espcam_espnow_live_encrypted_test/) | The live camera link with every packet sealed under the 1-2 session key (AES-GCM, replay window), same 160×120 at 6 Mbps |
+| [radio_sniffer](radio_sniffer/) | Keyless passive sniffer: every ESP-NOW frame on one channel and LoRa packets at once, one line per frame, never transmits |
 
 Open the project directory in PlatformIO, or change into it before running
 commands:

@@ -1,0 +1,25 @@
+captures with data: 3978 (bare 1184, flood 0xF1 1858, routed 0xF2 669, bad envelope 0, not ours 0)
+route messages 0xF3: 267 tag ok, 0 bad
+hop tag (network key): 3711 ok, 0 BAD  [text 0, voice 3673, pairing 0, session 38]
+session replies: 11 (8 distinct handshakes, 8 reproduced byte for byte, 0 failed)
+text/voice: 756 opened, 481 copies, 1926 no session key, 3 previous session, 0 BAD tag, 0 other, 0 to other IDs
+broadcast (to 255): 3 keys learned, 506 opened, 0 copies, 1 no key, 0 BAD
+  espnow 1 > 2: 35 opened, payload 1..1 bytes
+  espnow 2 > 1: 50 opened, payload 1..25 bytes
+  espnow 2 > 3: 50 opened, payload 1..25 bytes
+  espnow 2 > 4: 50 opened, payload 1..25 bytes
+  espnow 2 > 255: 506 opened, payload 14..132 bytes
+  espnow 3 > 2: 47 opened, payload 1..25 bytes
+  espnow 4 > 2: 50 opened, payload 1..25 bytes
+  flood  1 > 2: 48 opened, payload 1..1 bytes
+  flood  2 > 1: 48 opened, payload 1..1 bytes
+  flood  2 > 3: 48 opened, payload 1..1 bytes
+  flood  2 > 4: 47 opened, payload 1..1 bytes
+  flood  3 > 2: 48 opened, payload 1..1 bytes
+  flood  4 > 2: 49 opened, payload 1..1 bytes
+  routed 2 > 3: 47 opened, payload 1..1 bytes
+  routed 2 > 4: 48 opened, payload 1..1 bytes
+  routed 3 > 2: 43 opened, payload 1..1 bytes
+  routed 4 > 2: 48 opened, payload 1..1 bytes
+VERDICT capture integrity: PASS (every project frame verifies)
+VERDICT decryption: PASS
