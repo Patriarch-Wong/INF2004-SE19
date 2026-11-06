@@ -30,15 +30,10 @@
 static_assert(radio::min_frame_size <= relay_frame::min_route_size,
     "the receive callback would drop route messages");
 
-struct relay_peer
+// A board over a relay way: the session and presence state ESP-NOW keeps
+// (peer_state), and the path its frames take.
+struct relay_peer : peer_state
 {
-    session::link link;
-    uint32_t last_hello_ms = 0;
-    uint32_t hellos = 0;  // Sent since the handshake started.
-    uint32_t last_accept_ms = 0;
-    uint32_t last_resync_ms = 0;
-    uint32_t last_presence_ms = 0;  // Last presence ping sent.
-    bool shown_online = false;      // Last state logged as PEER.
     // The path the last frame from it took, origin first (route line).
     uint8_t heard_path[relay_frame::max_path] = {};
     uint8_t heard_length = 0;
@@ -71,7 +66,6 @@ struct relay_net
     uint8_t marker;
     call::machine &calls;
     relay_peer peers[max_id + 1];  // Indexed by device ID.
-    relay_route routes[max_id + 1];  // Routed relay only.
     relay_frame::seen_cache seen;
     uint32_t control_sequence = 0;
     uint16_t next_id = 0;
@@ -95,7 +89,9 @@ relay_net routed_net("ROUTED", via::routed, relay_frame::marker_routed,
     routed_calls);
 relay_net *const relay_nets[] = {&flood_net, &routed_net};
 
-// Route requests seen, by (origin, request ID): each is relayed once.
+// The routed relay's routes, by target, and the route requests it has
+// seen, by (origin, request ID): each is relayed once.
+relay_route routed_routes[max_id + 1];
 relay_frame::seen_cache routed_requests;
 uint16_t routed_request_id = 0;
 uint32_t routed_error_ms[max_id + 1] = {};  // Last route error, by target.
@@ -126,17 +122,14 @@ bool relay_peer_online(via link, uint8_t peer, uint32_t now)
 {
     const relay_peer &state = relay_of(link).peers[peer];
     return state.link.established() &&
-        static_cast<int32_t>(now - state.last_accept_ms) <
-            static_cast<int32_t>(app_config::presence_timeout_ms);
+        within_presence(state.last_accept_ms, now);
 }
 
 void relay_reject(relay_net &net, const radio::received_frame &frame,
     const char *reason)
 {
-    ++net.rejected;
-    Serial.printf("%s REJECT ", net.tag);
-    radio::print_mac(frame.mac);
-    Serial.printf(" | %u bytes | %s\n", frame.size, reason);
+    log_reject(way(net.link).tag, net.rejected, frame.mac, frame.size,
+        reason);
 }
 
 // Routed relay: routes
@@ -149,7 +142,7 @@ relay_route *routed_route(uint8_t target, uint32_t now)
     {
         return nullptr;
     }
-    relay_route &route = routed_net.routes[target];
+    relay_route &route = routed_routes[target];
     if (!route.valid)
     {
         return nullptr;
@@ -167,7 +160,7 @@ void routed_drop_via(uint8_t neighbour, const char *why)
 {
     for (uint8_t id = 1; id <= max_id; ++id)
     {
-        relay_route &route = routed_net.routes[id];
+        relay_route &route = routed_routes[id];
         if (route.valid && route.next_hop == neighbour)
         {
             route.valid = false;
@@ -195,7 +188,7 @@ void routed_learn(const uint8_t *path, size_t length, uint32_t now,
         }
     }
     const uint8_t target = path[length - 1];
-    relay_route &route = routed_net.routes[target];
+    relay_route &route = routed_routes[target];
     const bool take = own_answer || !route.valid ||
         length < route.path_length ||
         now - route.learned_ms >= app_config::relay_route_refresh_ms;
@@ -248,7 +241,7 @@ const uint8_t *routed_mac(uint8_t board)
 // Floods a route request for `target`.
 void routed_ask(uint8_t target, uint32_t now)
 {
-    relay_route &route = routed_net.routes[target];
+    relay_route &route = routed_routes[target];
     ++route.tries;
     route.asked_ms = now;
     route.refreshed_ms = now;
@@ -271,7 +264,7 @@ void routed_ask(uint8_t target, uint32_t now)
 // already (service_routed retries it) or nobody answered a moment ago.
 void routed_discover(uint8_t target, uint32_t now)
 {
-    relay_route &route = routed_net.routes[target];
+    relay_route &route = routed_routes[target];
     if (route.searching ||
         (route.tries >= app_config::relay_request_tries &&
             now - route.asked_ms < app_config::relay_request_backoff_ms))
@@ -417,7 +410,7 @@ void routed_on_reply(const relay_frame::route_message &reply, uint8_t sender,
     }
     if (at == 0)
     {
-        relay_route &route = routed_net.routes[reply.target];
+        relay_route &route = routed_routes[reply.target];
         route.searching = false;
         route.tries = 0;
         return;
@@ -436,7 +429,7 @@ void routed_on_error(const relay_frame::route_message &error, uint8_t sender,
     {
         return;
     }
-    relay_route &route = routed_net.routes[error.target];
+    relay_route &route = routed_routes[error.target];
     if (route.valid && route.next_hop == sender)
     {
         route.valid = false;
@@ -501,7 +494,7 @@ void service_routed(uint32_t now)
         {
             continue;
         }
-        relay_route &route = routed_net.routes[target];
+        relay_route &route = routed_routes[target];
         if (route.valid && acks_lost(route.next_hop, now))
         {
             routed_drop_via(route.next_hop, "first hop not acknowledging");
@@ -599,13 +592,9 @@ esp_err_t relay_send_payload(via link, uint8_t peer, const uint8_t *payload,
     relay_net &net = relay_of(link);
     uint8_t inner[relay_frame::max_inner_size] = {};
     size_t inner_size = 0;
-    uint32_t counter = 0;
-    const status sealed = net.peers[peer].link.seal(e2e_keys::network, type,
-        payload, size, inner, sizeof(inner), &inner_size, &counter);
-    if (sealed != status::ok)
+    if (!seal_payload(net.peers[peer].link, way(link).tag, type, payload,
+            size, inner, sizeof(inner), &inner_size))
     {
-        Serial.printf("%s SEAL_ERROR %s\n", net.tag,
-            secure_message::status_name(sealed));
         return ESP_FAIL;
     }
     return relay_send_inner(net, peer, inner, inner_size, millis());
@@ -614,17 +603,11 @@ esp_err_t relay_send_payload(via link, uint8_t peer, const uint8_t *payload,
 void relay_send_control(relay_net &net, uint8_t destination,
     const control_frame::message &content, uint32_t now)
 {
-    if (++net.control_sequence == 0)
-    {
-        net.control_sequence = 1;
-    }
-    const secure_message::header fields = {secure_message::version,
-        control_frame::type_session, own_id, destination,
-        net.control_sequence};
     uint8_t inner[relay_frame::max_inner_size];
     size_t size = 0;
-    const status built = control_frame::build(e2e_keys::network, fields,
-        content, inner, sizeof(inner), &size);
+    const status built = build_control(net.control_sequence,
+        control_frame::type_session, destination, content, inner,
+        sizeof(inner), &size);
     if (built != status::ok)
     {
         Serial.printf("%s control frame not built: %s\n", net.tag,
@@ -632,112 +615,6 @@ void relay_send_control(relay_net &net, uint8_t destination,
         return;
     }
     relay_send_inner(net, destination, inner, size, now);
-}
-
-// Sessions, as ESP-NOW's and the mesh's
-
-void relay_start_session(relay_net &net, uint8_t peer, uint32_t now)
-{
-    uint8_t nonce[session::nonce_size];
-    esp_fill_random(nonce, sizeof(nonce));
-    control_frame::message hello = {};
-    relay_peer &state = net.peers[peer];
-    if (state.link.initiate(nonce, &hello))
-    {
-        relay_send_control(net, peer, hello, now);
-        state.last_hello_ms = now;
-        state.hellos = 1;
-        Serial.printf("%s SESSION hello -> %u\n", net.tag, peer);
-    }
-}
-
-void service_relay_sessions(relay_net &net, uint32_t now)
-{
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        relay_peer &state = net.peers[peer];
-        control_frame::message hello = {};
-        const bool slow = state.hellos >= app_config::session_fast_hellos;
-        const uint32_t period = slow ? app_config::session_slow_retry_ms :
-            app_config::session_retry_ms;
-        if (state.link.initiating() && now - state.last_hello_ms >= period &&
-            state.link.hello(&hello))
-        {
-            relay_send_control(net, peer, hello, now);
-            state.last_hello_ms = now;
-            ++state.hellos;
-            if (state.hellos == app_config::session_fast_hellos)
-            {
-                Serial.printf("%s SESSION %u not answering: retrying every "
-                              "%lu s\n",
-                    net.tag, peer, static_cast<unsigned long>(
-                        app_config::session_slow_retry_ms / 1000));
-            }
-        }
-    }
-}
-
-void relay_maybe_resync(relay_net &net, uint8_t peer, uint32_t now)
-{
-    relay_peer &state = net.peers[peer];
-    if (!state.link.initiating() &&
-        now - state.last_accept_ms >= app_config::session_resync_ms &&
-        now - state.last_resync_ms >= app_config::session_resync_ms)
-    {
-        state.last_resync_ms = now;
-        Serial.printf("%s SESSION resync with %u\n", net.tag, peer);
-        relay_start_session(net, peer, now);
-    }
-}
-
-void relay_on_session(relay_net &net, const radio::received_frame &frame,
-    const secure_message::header &fields,
-    const control_frame::message &content, uint32_t now)
-{
-    relay_peer &state = net.peers[fields.source];
-    if (!state.link.paired())
-    {
-        relay_reject(net, frame, "no pair key for source");
-        return;
-    }
-    if (content.step == static_cast<uint8_t>(session::step::hello) &&
-        state.link.initiating())
-    {
-        // The peer is back. If this board has the lower ID it ignores the
-        // hello and its own must win, so send it now.
-        state.hellos = 0;
-        state.last_hello_ms = now - app_config::session_retry_ms;
-    }
-    uint8_t nonce[session::nonce_size];
-    esp_fill_random(nonce, sizeof(nonce));
-    control_frame::message response = {};
-    switch (state.link.receive(content, nonce, &response))
-    {
-    case session::event::replied:
-        relay_send_control(net, fields.source, response, now);
-        Serial.printf("%s SESSION reply -> %u\n", net.tag, fields.source);
-        break;
-    case session::event::established:
-        relay_send_control(net, fields.source, response, now);
-        Serial.printf("%s SESSION established with %u | session %08lX | "
-                      "initiator\n",
-            net.tag, fields.source,
-            static_cast<unsigned long>(state.link.session_id()));
-        state.last_accept_ms = now;
-        break;
-    case session::event::confirmed:
-        Serial.printf("%s SESSION established with %u | session %08lX | "
-                      "responder\n",
-            net.tag, fields.source,
-            static_cast<unsigned long>(state.link.session_id()));
-        state.last_accept_ms = now;
-        break;
-    case session::event::bad_tag:
-        relay_reject(net, frame, "bad handshake tag");
-        break;
-    case session::event::ignored:
-        break;
-    }
 }
 
 // Receive
@@ -764,7 +641,12 @@ void relay_deliver(relay_net &net, const radio::received_frame &frame,
         }
         else
         {
-            relay_on_session(net, frame, fields, content, now);
+            const char *problem = take_session(net.link, fields.source,
+                content, now);
+            if (problem)
+            {
+                relay_reject(net, frame, problem);
+            }
         }
         return;
     }
@@ -778,7 +660,7 @@ void relay_deliver(relay_net &net, const radio::received_frame &frame,
         result != session::open_result::accepted_new_session)
     {
         relay_reject(net, frame, session::open_result_name(result));
-        relay_maybe_resync(net, fields.source, now);
+        maybe_resync(net.link, fields.source, now);
         return;
     }
     ++net.delivered;
@@ -945,16 +827,34 @@ void relay_route_text(via link, uint8_t peer, uint32_t now, char *text,
 
 // Every Wi-Fi way (declared in handset.inc; here, after the last way)
 
-const session::link &session_via(via link, uint8_t peer)
+peer_state &peer_via(via link, uint8_t peer)
 {
     switch (link)
     {
-    case via::mesh: return mesh_peers[peer].link;
+    case via::mesh: return mesh_peers[peer];
     case via::flood:
-    case via::routed: return relay_of(link).peers[peer].link;
+    case via::routed: return relay_of(link).peers[peer];
     case via::espnow: break;
     }
-    return peers[peer].link;
+    return peers[peer];
+}
+
+void send_control_via(via link, uint8_t destination,
+    const control_frame::message &content, uint32_t now)
+{
+    switch (link)
+    {
+    case via::mesh:
+        mesh_send_control(destination, content);
+        return;
+    case via::flood:
+    case via::routed:
+        relay_send_control(relay_of(link), destination, content, now);
+        return;
+    case via::espnow: break;
+    }
+    send_control(control_frame::type_session, destination,
+        radio::find_device(destination)->mac, content);
 }
 
 void route_text_via(via link, uint8_t peer, uint32_t now, char *text,
@@ -1014,44 +914,7 @@ bool place_relay_call(relay_net &net, uint8_t peer, uint32_t now)
     }
     const uint32_t id = random_id();
     net.calls.set_unavailable(false);
-    if (!net.calls.dial(peer, id, now))
-    {
-        Serial.printf("%s LINK refused: already %s\n", net.tag,
-            call::state_name(net.calls.current()));
-        return false;
-    }
-    return true;
-}
-
-// Pings every board with a session over this transport and logs when one
-// comes or goes.
-void service_relay_presence(relay_net &net, uint32_t now)
-{
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        if (!valid_peer(peer))
-        {
-            continue;
-        }
-        relay_peer &state = net.peers[peer];
-        const uint32_t period = state.shown_online ?
-            app_config::presence_ping_ms : app_config::presence_offline_ping_ms;
-        if (state.link.established() &&
-            now - state.last_presence_ms >= period)
-        {
-            state.last_presence_ms = now;
-            const uint8_t payload[] = {kind_presence};
-            relay_send_payload(net.link, peer, payload, sizeof(payload),
-                secure_message::type_voice);  // Best effort.
-        }
-        const bool online = relay_peer_online(net.link, peer, now);
-        if (online != state.shown_online)
-        {
-            state.shown_online = online;
-            Serial.printf("%s PEER %u (%s) %s\n", net.tag, peer,
-                device_name(peer), online ? "online" : "offline");
-        }
-    }
+    return dial(net.calls, way(net.link).tag, peer, id, now);
 }
 
 // Status and set-up
@@ -1096,7 +959,7 @@ void print_routes()
         {
             continue;
         }
-        const relay_route &route = routed_net.routes[target];
+        const relay_route &route = routed_routes[target];
         if (route.valid)
         {
             char text[40];
@@ -1157,7 +1020,7 @@ void setup_relay()
         {
             if (net->peers[peer].link.paired())
             {
-                relay_start_session(*net, peer, now);
+                start_session(net->link, peer, now);
             }
         }
     }
@@ -1168,8 +1031,9 @@ void service_relay(uint32_t now)
     service_routed(now);
     for (relay_net *net : relay_nets)
     {
-        service_relay_sessions(*net, now);
-        service_relay_presence(*net, now);
+        service_sessions(net->link, now, false);
+        service_presence(net->link, now, true, false, presence_ping,
+            sizeof(presence_ping));
         service_calls(net->link, now);
     }
 }

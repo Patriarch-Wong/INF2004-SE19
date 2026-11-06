@@ -687,13 +687,7 @@ bool place_lora_call(uint8_t peer, uint32_t now)
     }
     const uint32_t id = random_id();
     lora_calls.set_unavailable(false);
-    if (!lora_calls.dial(peer, id, now))
-    {
-        Serial.printf("LORA LINK refused: already %s\n",
-            call::state_name(lora_calls.current()));
-        return false;
-    }
-    return true;
+    return dial(lora_calls, "LORA ", peer, id, now);
 }
 
 void send_lora_call_messages()

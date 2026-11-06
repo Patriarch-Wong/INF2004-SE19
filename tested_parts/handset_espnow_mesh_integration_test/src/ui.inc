@@ -392,16 +392,16 @@ void row_label(const menu_row &row, char *label, size_t capacity)
     switch (row.kind)
     {
     case row_kind::espnow_page:
-        snprintf(label, capacity, "ESP-NOW");
+        snprintf(label, capacity, "%s", way(via::espnow).label);
         break;
     case row_kind::mesh_page:
-        snprintf(label, capacity, "ESP-MESH");
+        snprintf(label, capacity, "%s", way(via::mesh).label);
         break;
     case row_kind::flood_page:
-        snprintf(label, capacity, "Flood mesh");
+        snprintf(label, capacity, "%s", way(via::flood).label);
         break;
     case row_kind::routed_page:
-        snprintf(label, capacity, "Routed relay");
+        snprintf(label, capacity, "%s", way(via::routed).label);
         break;
     case row_kind::lora_page:
         snprintf(label, capacity, "LoRa");
@@ -521,39 +521,39 @@ void draw_menu_row(uint8_t index)
     row_label(row, label, sizeof(label));
     draw_text(label, 20, y + 10, 2,
         highlighted ? ST77XX_BLACK : ST77XX_WHITE);
+    uint16_t color = outline_color;
+    bool dot = true;
     const bool *dots = row_dots(row.kind);
     if (dots)
     {
         // Green: the board can be asked over this way (row_up()).
-        lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
-            dots[row.peer] ? listen_color : outline_color);
+        color = dots[row.peer] ? listen_color : outline_color;
     }
     else if (row.kind >= row_kind::tool_block)
     {
-        uint16_t color = outline_color;
-        if (tool_dot(row, &color))
-        {
-            lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
-                color);
-        }
+        dot = tool_dot(row, &color);
     }
     else if (row.kind == row_kind::mesh_page)
     {
         // This board in the mesh: green in, red failed, grey joining.
         const mesh_radio::state mesh = mesh_radio::current();
-        lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
-            mesh == mesh_radio::state::connected ? listen_color :
-            mesh == mesh_radio::state::failed ? talk_color :
-            outline_color);
+        color = mesh == mesh_radio::state::connected ? listen_color :
+            mesh == mesh_radio::state::failed ? talk_color : outline_color;
     }
     else if (row.kind == row_kind::lora_page)
     {
         // The LoRa radio: green ok, red failed, grey starting.
         const lora_radio::state radio = lora_radio::current();
-        lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6,
-            radio == lora_radio::state::ok ? listen_color :
-            radio == lora_radio::state::failed ? talk_color :
-            outline_color);
+        color = radio == lora_radio::state::ok ? listen_color :
+            radio == lora_radio::state::failed ? talk_color : outline_color;
+    }
+    else
+    {
+        dot = false;
+    }
+    if (dot)
+    {
+        lcd.fillCircle(row_margin + width - 16, y + row_height / 2, 6, color);
     }
 }
 
@@ -844,11 +844,11 @@ const char *list_title(screen list)
 {
     switch (list)
     {
-    case screen::espnow_list: return "ESP-NOW";
+    case screen::espnow_list: return way(via::espnow).label;
     case screen::tools: return "Tools";
-    case screen::flood_list: return "Flood mesh";
-    case screen::routed_list: return "Routed relay";
-    case screen::mesh_list: return "ESP-MESH";
+    case screen::flood_list: return way(via::flood).label;
+    case screen::routed_list: return way(via::routed).label;
+    case screen::mesh_list: return way(via::mesh).label;
     case screen::lora_list: return "LoRa";
     default: return "Menu";
     }

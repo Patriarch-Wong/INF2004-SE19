@@ -26,6 +26,35 @@ def ui_line(board, pattern, timeout=2.0):
     return board.wait(r"UI \| screen " + pattern, timeout, since)
 
 
+def wait_idle(boards, screens):
+    """Waits until each board shows one of `screens` ("menu|espnow|..."):
+    no connection on screen."""
+    for board in boards:
+        for _ in range(10):
+            if ui_line(board, rf"({screens})\b"):
+                break
+            time.sleep(0.7)
+
+
+def connect_over(tag, word, a, b, a_id, b_id, request, b_timeout):
+    """a asks b with serial `<word> connect`; b accepts. `request` is what
+    must follow "<tag> LINK request | <a_id>" in b's log."""
+    s_a, s_b = a.mark(), b.mark()
+    a.send(f"{word} connect {b_id}")
+    if not b.wait(rf"{tag} LINK request \| {a_id}{request}", 8, s_b):
+        return False
+    b.send("accept")
+    return bool(a.wait(rf"{tag} LINK connected", 8, s_a) and
+                b.wait(rf"{tag} LINK connected", b_timeout, s_b))
+
+
+def disconnect_over(tag, a, b):
+    s_a, s_b = a.mark(), b.mark()
+    a.send("disconnect")
+    return bool(a.wait(rf"{tag} LINK disconnected", 8, s_a) and
+                b.wait(rf"{tag} LINK disconnected", 8, s_b))
+
+
 def voice(sender, receiver, seconds, via):
     """Sends a test-signal stream and checks the receiver played it all."""
     s_tx, s_rx = sender.mark(), receiver.mark()

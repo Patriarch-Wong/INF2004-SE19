@@ -213,10 +213,13 @@ bool relay_peer_online(via link, uint8_t peer, uint32_t now);
 esp_err_t relay_send_payload(via link, uint8_t peer, const uint8_t *payload,
     size_t size, uint8_t type);
 
-// Each Wi-Fi way's session with `peer`, the route to it ("finding..."
-// while not known; not for ESP-NOW), and why it looks gone (relay.inc,
-// which comes after every way).
-const session::link &session_via(via link, uint8_t peer);
+// Each Wi-Fi way's session and presence state for `peer`, how it sends a
+// session control frame, the route to `peer` ("finding..." while not
+// known; not for ESP-NOW), and why `peer` looks gone (relay.inc, which
+// comes after every way).
+peer_state &peer_via(via link, uint8_t peer);
+void send_control_via(via link, uint8_t destination,
+    const control_frame::message &content, uint32_t now);
 void route_text_via(via link, uint8_t peer, uint32_t now, char *text,
     size_t capacity);
 const char *gone_reason(via link, uint8_t peer, uint32_t now);
@@ -250,6 +253,20 @@ uint32_t random_id()
         id = esp_random();
     } while (id == 0);
     return id;
+}
+
+// Asks `peer` on `machine` under connection ID `id`; false, logged with
+// `prefix` ("MESH "), if `machine` is already busy.
+bool dial(call::machine &machine, const char *prefix, uint8_t peer,
+    uint32_t id, uint32_t now)
+{
+    if (machine.dial(peer, id, now))
+    {
+        return true;
+    }
+    Serial.printf("%sLINK refused: already %s\n", prefix,
+        call::state_name(machine.current()));
+    return false;
 }
 
 // Beeps while a request on `machine` waits for this user.
@@ -308,16 +325,33 @@ constexpr uint8_t kind_presence = 5;
 static_assert(kind_presence > voice_link::kind_end &&
         kind_presence != call::kind_call,
     "presence kind clashes with another payload kind");
+const uint8_t presence_ping[] = {kind_presence};
 
-// The peer's radio stopped acknowledging this board's frames: several
-// failed in a row and none got through for ack_lost_ms. Signed, because
-// the send callback can store a time later than the loop's `now`.
+const char *device_name(uint8_t id);
+
+// Sends to a board failed `failures` times in a row, and none got through
+// since `last_ok_ms` for ack_lost_ms. Signed, because a send callback can
+// store a time later than the loop's `now`.
+bool sends_failing(uint32_t failures, uint32_t last_ok_ms, uint32_t now)
+{
+    return failures >= app_config::ack_lost_failures &&
+        static_cast<int32_t>(now - last_ok_ms) >=
+            static_cast<int32_t>(app_config::ack_lost_ms);
+}
+
+// `since_ms` is within presence_timeout_ms of `now` (signed: it can be
+// stamped after the loop's `now`).
+bool within_presence(uint32_t since_ms, uint32_t now)
+{
+    return static_cast<int32_t>(now - since_ms) <
+        static_cast<int32_t>(app_config::presence_timeout_ms);
+}
+
+// The peer's radio stopped acknowledging this board's frames.
 bool acks_lost(uint8_t peer, uint32_t now)
 {
     const radio::ack_state acks = radio::acks(peer);
-    return acks.failures >= app_config::ack_lost_failures &&
-        static_cast<int32_t>(now - acks.last_ok_ms) >=
-            static_cast<int32_t>(app_config::ack_lost_ms);
+    return sends_failing(acks.failures, acks.last_ok_ms, now);
 }
 
 // A session is up, something from the handset opened recently, and its
@@ -325,10 +359,26 @@ bool acks_lost(uint8_t peer, uint32_t now)
 // handset was there once.
 bool peer_online(uint8_t peer, uint32_t now)
 {
-    return can_send(peer) &&
-        static_cast<int32_t>(now - peers[peer].last_accept_ms) <
-            static_cast<int32_t>(app_config::presence_timeout_ms) &&
+    return can_send(peer) && within_presence(peers[peer].last_accept_ms, now) &&
         !acks_lost(peer, now);
+}
+
+// Seals `payload` under `link` into `frame`; false, logged with `prefix`
+// ("MESH "), if it can't. Every transport's sending goes through here.
+bool seal_payload(session::link &link, const char *prefix, uint8_t type,
+    const uint8_t *payload, size_t size, uint8_t *frame, size_t capacity,
+    size_t *frame_size)
+{
+    uint32_t counter = 0;
+    const status sealed = link.seal(e2e_keys::network, type, payload, size,
+        frame, capacity, frame_size, &counter);
+    if (sealed != status::ok)
+    {
+        Serial.printf("%sSEAL_ERROR %s\n", prefix,
+            secure_message::status_name(sealed));
+        return false;
+    }
+    return true;
 }
 
 esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size,
@@ -336,12 +386,9 @@ esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size,
 {
     uint8_t frame[secure_message::max_frame_size] = {};
     size_t frame_size = 0;
-    uint32_t counter = 0;
-    const status sealed = peers[peer].link.seal(e2e_keys::network, type,
-        payload, size, frame, sizeof(frame), &frame_size, &counter);
-    if (sealed != status::ok)
+    if (!seal_payload(peers[peer].link, "", type, payload, size, frame,
+            sizeof(frame), &frame_size))
     {
-        Serial.printf("SEAL_ERROR %s\n", secure_message::status_name(sealed));
         return ESP_FAIL;
     }
     return radio::send(radio::find_device(peer)->mac, frame, frame_size);
@@ -397,7 +444,7 @@ via voice_via()
 
 bool can_send_via(via link, uint8_t peer)
 {
-    return session_via(link, peer).established();
+    return peer_via(link, peer).link.established();
 }
 
 bool online_via(via link, uint8_t peer, uint32_t now)
@@ -430,6 +477,160 @@ esp_err_t send_via(via link, uint8_t peer, const uint8_t *payload,
 bool radio_full(esp_err_t result)
 {
     return result == ESP_ERR_ESPNOW_NO_MEM || mesh_radio::busy(result);
+}
+
+// Sessions over every Wi-Fi way: the session.h handshake, made over the
+// way itself, its retries and resyncs. Each way keeps its own keys and
+// counters (peer_via()).
+
+void start_session(via link, uint8_t peer, uint32_t now)
+{
+    uint8_t nonce[session::nonce_size];
+    esp_fill_random(nonce, sizeof(nonce));
+    control_frame::message hello = {};
+    peer_state &state = peer_via(link, peer);
+    if (state.link.initiate(nonce, &hello))
+    {
+        send_control_via(link, peer, hello, now);
+        state.last_hello_ms = now;
+        state.hellos = 1;
+        Serial.printf("%sSESSION hello -> %u\n", way(link).tag, peer);
+    }
+}
+
+// Resends each handshake still waiting: fast at first, then slowly, as a
+// board that is off would only hold up this board's other frames
+// (ISSUES.md B1). `log_retries`: log each fast retry (the relay ways
+// don't).
+void service_sessions(via link, uint32_t now, bool log_retries)
+{
+    for (uint8_t peer = 1; peer <= max_id; ++peer)
+    {
+        peer_state &state = peer_via(link, peer);
+        control_frame::message hello = {};
+        const bool slow = state.hellos >= app_config::session_fast_hellos;
+        const uint32_t period = slow ? app_config::session_slow_retry_ms :
+            app_config::session_retry_ms;
+        if (state.link.initiating() && now - state.last_hello_ms >= period &&
+            state.link.hello(&hello))
+        {
+            send_control_via(link, peer, hello, now);
+            state.last_hello_ms = now;
+            ++state.hellos;
+            if (state.hellos == app_config::session_fast_hellos)
+            {
+                Serial.printf("%sSESSION %u not answering: retrying every "
+                              "%lu s\n",
+                    way(link).tag, peer, static_cast<unsigned long>(
+                        app_config::session_slow_retry_ms / 1000));
+            }
+            else if (!slow && log_retries)
+            {
+                Serial.printf("%sSESSION hello -> %u (retry)\n",
+                    way(link).tag, peer);
+            }
+        }
+    }
+}
+
+// A paired peer whose frames keep failing to open, with nothing accepted
+// from it for a while, gets a new handshake in case the two lost step.
+void maybe_resync(via link, uint8_t peer, uint32_t now)
+{
+    peer_state &state = peer_via(link, peer);
+    if (!state.link.initiating() &&
+        now - state.last_accept_ms >= app_config::session_resync_ms &&
+        now - state.last_resync_ms >= app_config::session_resync_ms)
+    {
+        state.last_resync_ms = now;
+        Serial.printf("%sSESSION resync with %u\n", way(link).tag, peer);
+        start_session(link, peer, now);
+    }
+}
+
+void print_session(via link, const char *how, uint8_t peer)
+{
+    Serial.printf("%sSESSION established with %u | session %08lX | %s\n",
+        way(link).tag, peer,
+        static_cast<unsigned long>(peer_via(link, peer).link.session_id()),
+        how);
+}
+
+// A handshake message from `source` over `link`, addressed to this board.
+// Returns why it is rejected, or null.
+const char *take_session(via link, uint8_t source,
+    const control_frame::message &content, uint32_t now)
+{
+    peer_state &state = peer_via(link, source);
+    if (!state.link.paired())
+    {
+        return "no pair key for source";
+    }
+    if (content.step == static_cast<uint8_t>(session::step::hello) &&
+        state.link.initiating())
+    {
+        // The peer is back. If this board has the lower ID it ignores the
+        // hello and its own must win, so send it now rather than at the
+        // slow retry.
+        state.hellos = 0;
+        state.last_hello_ms = now - app_config::session_retry_ms;
+    }
+    uint8_t nonce[session::nonce_size];
+    esp_fill_random(nonce, sizeof(nonce));
+    control_frame::message response = {};
+    switch (state.link.receive(content, nonce, &response))
+    {
+    case session::event::replied:
+        send_control_via(link, source, response, now);
+        Serial.printf("%sSESSION reply -> %u\n", way(link).tag, source);
+        break;
+    case session::event::established:
+        send_control_via(link, source, response, now);
+        print_session(link, "initiator", source);
+        state.last_accept_ms = now;  // Online now.
+        break;
+    case session::event::confirmed:
+        print_session(link, "responder", source);
+        state.last_accept_ms = now;
+        break;
+    case session::event::bad_tag:
+        return "bad handshake tag";
+    case session::event::ignored:
+        break;
+    }
+    return nullptr;
+}
+
+// Pings every board with a session over `link` when due, or at once if
+// `at_once`, while `may_ping`, and logs when one comes or goes. Offline
+// boards less often (ISSUES.md B1); one back in range is found through its
+// own pings.
+void service_presence(via link, uint32_t now, bool may_ping, bool at_once,
+    const uint8_t *ping, size_t size)
+{
+    for (uint8_t peer = 1; peer <= max_id; ++peer)
+    {
+        if (!valid_peer(peer))
+        {
+            continue;
+        }
+        peer_state &state = peer_via(link, peer);
+        const uint32_t period = state.shown_online ?
+            app_config::presence_ping_ms : app_config::presence_offline_ping_ms;
+        if (may_ping && can_send_via(link, peer) &&
+            (at_once || now - state.last_presence_ms >= period))
+        {
+            state.last_presence_ms = now;
+            send_via(link, peer, ping, size);  // Best effort.
+        }
+        const bool online = online_via(link, peer, now);
+        if (online != state.shown_online)
+        {
+            state.shown_online = online;
+            Serial.printf("%sPEER %u (%s) %s\n", way(link).tag, peer,
+                device_name(peer), online ? "online" : "offline");
+        }
+    }
 }
 
 // Codec task
@@ -832,8 +1033,6 @@ void service_sender(uint32_t now)
 
 // Receiver, loop side
 
-const char *device_name(uint8_t id);
-
 void on_voice(via link, uint8_t source, const uint8_t *payload, size_t size,
     int64_t now_us, uint32_t now)
 {
@@ -1230,7 +1429,7 @@ void handle_data(const radio::received_frame &frame,
         result != session::open_result::accepted_new_session)
     {
         reject(frame, session::open_result_name(result));
-        maybe_resync(fields.source, now);
+        maybe_resync(via::espnow, fields.source, now);
         return;
     }
     ++accepted_count;
@@ -1283,13 +1482,7 @@ bool place_call(uint8_t peer, uint32_t now)
             can_send(peer) ? "no presence ping for a while" : "no session");
         return false;
     }
-    if (!calls.dial(peer, random_id(), now))
-    {
-        Serial.printf("LINK refused: already %s\n",
-            call::state_name(calls.current()));
-        return false;
-    }
-    return true;
+    return dial(calls, "", peer, random_id(), now);
 }
 
 // Sends what `link`'s connection machine has queued.
@@ -1382,7 +1575,7 @@ void report_call(via link, uint32_t now)
             info.tag, machine.peer(), device_name(machine.peer()),
             static_cast<unsigned long>(machine.call_id()),
             static_cast<unsigned long>(
-                session_via(link, machine.peer()).session_id()));
+                peer_via(link, machine.peer()).link.session_id()));
         break;
     case call::state::idle:
         break;
@@ -1416,36 +1609,6 @@ void report_route(via link, uint32_t now)
         device_name(machine.peer()), route);
 }
 
-// Pings every handset with a session and logs when one comes or goes.
-void service_presence(uint32_t now)
-{
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        if (!valid_peer(peer))
-        {
-            continue;
-        }
-        peer_state &state = peers[peer];
-        // Offline boards less often (ISSUES.md B1); one back in range is
-        // found through its own pings.
-        const uint32_t period = state.shown_online ?
-            app_config::presence_ping_ms : app_config::presence_offline_ping_ms;
-        if (can_send(peer) && now - state.last_presence_ms >= period)
-        {
-            state.last_presence_ms = now;
-            const uint8_t payload[] = {kind_presence};
-            send_payload(peer, payload, sizeof(payload));  // Best effort.
-        }
-        const bool online = peer_online(peer, now);
-        if (online != state.shown_online)
-        {
-            state.shown_online = online;
-            Serial.printf("PEER %u (%s) %s\n", peer, device_name(peer),
-                online ? "online" : "offline");
-        }
-    }
-}
-
 // Ends `link`'s connection if its board is gone: its presence pings
 // stopped (or, by way, its radio stopped acknowledging, this board left
 // the mesh, sends to it keep failing), or it made a new session, which
@@ -1462,7 +1625,7 @@ void check_call_peer(via link, uint32_t now)
         return;
     }
     const uint8_t peer = machine.peer();
-    const uint32_t session = session_via(link, peer).session_id();
+    const uint32_t session = peer_via(link, peer).link.session_id();
     if (machine.call_id() != log.session_for)
     {
         // A new connection, or the same one under a new ID (both asked at
@@ -1541,7 +1704,7 @@ void print_sessions(via link, uint32_t now)
         {
             continue;
         }
-        const session::link &session = session_via(link, peer);
+        const session::link &session = peer_via(link, peer).link;
         if (session.established() && online_via(link, peer, now))
         {
             char route[40];
@@ -1779,7 +1942,8 @@ void service_handset(uint32_t now)
             static_cast<unsigned long>(app_config::opus_bitrate_bps),
             static_cast<unsigned long>(codec_lookahead));
     }
-    service_presence(now);
+    service_presence(via::espnow, now, true, false, presence_ping,
+        sizeof(presence_ping));
     service_calls(now);
     service_sender(now);
     service_receiver(now);

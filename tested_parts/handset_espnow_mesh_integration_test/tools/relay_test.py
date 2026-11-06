@@ -16,7 +16,9 @@ serial needed): boards 1 and 2 block each other's relayed frames
 import sys
 import time
 
-from two_board_test import check, finish, open_boards, ui_line, voice
+import two_board_test
+from two_board_test import (check, connect_over, disconnect_over, finish,
+                            open_boards, ui_line, voice)
 
 B1 = B2 = None
 
@@ -28,32 +30,18 @@ WAYS = {
 
 
 def wait_idle(*boards):
-    for board in boards:
-        for _ in range(10):
-            if ui_line(board, r"(menu|espnow|mesh|flood|routed|lora|volume|"
-                              r"status)\b"):
-                break
-            time.sleep(0.7)
+    two_board_test.wait_idle(
+        boards, "menu|espnow|mesh|flood|routed|lora|volume|status")
 
 
 def connect(way, a, b, a_id, b_id):
     """a asks b over `way` with serial commands; b accepts."""
     tag, word, _ = WAYS[way]
-    s_a, s_b = a.mark(), b.mark()
-    a.send(f"{word} connect {b_id}")
-    if not b.wait(rf"{tag} LINK request \| {a_id} ", 8, s_b):
-        return False
-    b.send("accept")
-    return bool(a.wait(rf"{tag} LINK connected", 8, s_a) and
-                b.wait(rf"{tag} LINK connected", 3, s_b))
+    return connect_over(tag, word, a, b, a_id, b_id, " ", 3)
 
 
 def disconnect(way, a, b):
-    tag = WAYS[way][0]
-    s_a, s_b = a.mark(), b.mark()
-    a.send("disconnect")
-    return bool(a.wait(rf"{tag} LINK disconnected", 8, s_a) and
-                b.wait(rf"{tag} LINK disconnected", 8, s_b))
+    return disconnect_over(WAYS[way][0], a, b)
 
 
 def route_on_screen(board, way):

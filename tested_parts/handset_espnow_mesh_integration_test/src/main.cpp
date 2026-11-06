@@ -109,10 +109,24 @@ bool non_zero(const uint8_t *key, size_t size)
     return any != 0;
 }
 
+static_assert(max_id < 32, "valid_peer() keeps one bit per board ID");
+
 bool valid_peer(unsigned id)
 {
-    return id >= 1 && id <= max_id && id != own_id &&
-        radio::find_device(static_cast<uint8_t>(id));
+    // Bit N: board N is another listed handset. The list is compiled in, so
+    // it is searched once, not on each of the loop's many calls.
+    static const uint32_t listed = [] {
+        uint32_t boards = 0;
+        for (unsigned n = 1; n <= max_id; ++n)
+        {
+            if (n != own_id && radio::find_device(static_cast<uint8_t>(n)))
+            {
+                boards |= 1u << n;
+            }
+        }
+        return boards;
+    }();
+    return id < 32 && (listed & (1u << id)) != 0;
 }
 
 bool fail(const char *message)
@@ -122,18 +136,28 @@ bool fail(const char *message)
     return false;
 }
 
+// A control frame for `destination`, numbered by `sequence` (each
+// transport counts its own).
+status build_control(uint32_t &sequence, uint8_t type, uint8_t destination,
+    const control_frame::message &content, uint8_t *frame, size_t capacity,
+    size_t *size)
+{
+    if (++sequence == 0)
+    {
+        sequence = 1;
+    }
+    const secure_message::header fields = {secure_message::version, type,
+        own_id, destination, sequence};
+    return control_frame::build(e2e_keys::network, fields, content, frame,
+        capacity, size);
+}
+
 void send_control(uint8_t type, uint8_t destination, const uint8_t *mac,
     const control_frame::message &content)
 {
-    if (++control_sequence == 0)
-    {
-        control_sequence = 1;
-    }
-    const secure_message::header fields = {secure_message::version, type,
-        own_id, destination, control_sequence};
     uint8_t frame[secure_message::max_frame_size];
     size_t size = 0;
-    const status built = control_frame::build(e2e_keys::network, fields,
+    const status built = build_control(control_sequence, type, destination,
         content, frame, sizeof(frame), &size);
     if (built != status::ok)
     {
@@ -144,137 +168,19 @@ void send_control(uint8_t type, uint8_t destination, const uint8_t *mac,
     radio::send(mac, frame, size);
 }
 
+// A frame dropped, counted in `count` and logged with `prefix` ("MESH ").
+void log_reject(const char *prefix, uint32_t &count, const uint8_t *mac,
+    unsigned size, const char *reason)
+{
+    ++count;
+    Serial.printf("%sREJECT ", prefix);
+    radio::print_mac(mac);
+    Serial.printf(" | %u bytes | %s\n", size, reason);
+}
+
 void reject(const radio::received_frame &frame, const char *reason)
 {
-    ++rejected_count;
-    Serial.print("REJECT ");
-    radio::print_mac(frame.mac);
-    Serial.printf(" | %u bytes | %s\n", frame.size, reason);
-}
-
-// Sessions
-
-void start_session(uint8_t peer, uint32_t now)
-{
-    uint8_t nonce[session::nonce_size];
-    esp_fill_random(nonce, sizeof(nonce));
-    control_frame::message hello = {};
-    if (peers[peer].link.initiate(nonce, &hello))
-    {
-        send_control(control_frame::type_session, peer,
-            radio::find_device(peer)->mac, hello);
-        peers[peer].last_hello_ms = now;
-        peers[peer].hellos = 1;
-        Serial.printf("SESSION hello -> %u\n", peer);
-    }
-}
-
-void service_sessions(uint32_t now)
-{
-    for (uint8_t peer = 1; peer <= max_id; ++peer)
-    {
-        peer_state &state = peers[peer];
-        control_frame::message hello = {};
-        // Fast at first, then slowly: a board that is off would only hold
-        // up this board's other frames (ISSUES.md B1).
-        const bool slow = state.hellos >= app_config::session_fast_hellos;
-        const uint32_t period = slow ? app_config::session_slow_retry_ms :
-            app_config::session_retry_ms;
-        if (state.link.initiating() && now - state.last_hello_ms >= period &&
-            state.link.hello(&hello))
-        {
-            send_control(control_frame::type_session, peer,
-                radio::find_device(peer)->mac, hello);
-            state.last_hello_ms = now;
-            ++state.hellos;
-            if (state.hellos == app_config::session_fast_hellos)
-            {
-                Serial.printf("SESSION %u not answering: retrying every "
-                              "%lu s\n",
-                    peer, static_cast<unsigned long>(
-                        app_config::session_slow_retry_ms / 1000));
-            }
-            else if (!slow)
-            {
-                Serial.printf("SESSION hello -> %u (retry)\n", peer);
-            }
-        }
-    }
-}
-
-// A paired peer whose frames keep failing, with nothing accepted from it
-// for a while, gets a new handshake in case the two sides lost step.
-void maybe_resync(uint8_t peer, uint32_t now)
-{
-    peer_state &state = peers[peer];
-    if (!state.link.initiating() &&
-        now - state.last_accept_ms >= app_config::session_resync_ms &&
-        now - state.last_resync_ms >= app_config::session_resync_ms)
-    {
-        state.last_resync_ms = now;
-        Serial.printf("SESSION resync with %u\n", peer);
-        start_session(peer, now);
-    }
-}
-
-void print_session(const char *how, uint8_t peer)
-{
-    Serial.printf("SESSION established with %u | session %08lX | %s\n", peer,
-        static_cast<unsigned long>(peers[peer].link.session_id()), how);
-}
-
-void handle_session(const radio::received_frame &frame,
-    const secure_message::header &fields,
-    const control_frame::message &content, uint32_t now)
-{
-    session::link &link = peers[fields.source].link;
-    if (fields.destination != own_id)
-    {
-        reject(frame, "not addressed to this device");
-        return;
-    }
-    if (!link.paired())
-    {
-        reject(frame, "no pair key for source");
-        return;
-    }
-    if (content.step == static_cast<uint8_t>(session::step::hello) &&
-        link.initiating())
-    {
-        // The peer is back. If this board has the lower ID it ignores the
-        // hello and its own must win, so send it now rather than at the
-        // slow retry.
-        peer_state &state = peers[fields.source];
-        state.hellos = 0;
-        state.last_hello_ms = now - app_config::session_retry_ms;
-    }
-    uint8_t nonce[session::nonce_size];
-    esp_fill_random(nonce, sizeof(nonce));
-    control_frame::message response = {};
-    const uint8_t *mac = radio::find_device(fields.source)->mac;
-    switch (link.receive(content, nonce, &response))
-    {
-    case session::event::replied:
-        send_control(control_frame::type_session, fields.source, mac,
-            response);
-        Serial.printf("SESSION reply -> %u\n", fields.source);
-        break;
-    case session::event::established:
-        send_control(control_frame::type_session, fields.source, mac,
-            response);
-        print_session("initiator", fields.source);
-        peers[fields.source].last_accept_ms = now;  // Online now.
-        break;
-    case session::event::confirmed:
-        print_session("responder", fields.source);
-        peers[fields.source].last_accept_ms = now;
-        break;
-    case session::event::bad_tag:
-        reject(frame, "bad handshake tag");
-        break;
-    case session::event::ignored:
-        break;
-    }
+    log_reject("", rejected_count, frame.mac, frame.size, reason);
 }
 
 #include "handset.inc"
@@ -284,6 +190,23 @@ void handle_session(const radio::received_frame &frame,
 #include "ui.inc"
 
 // Receive
+
+void handle_session(const radio::received_frame &frame,
+    const secure_message::header &fields,
+    const control_frame::message &content, uint32_t now)
+{
+    if (fields.destination != own_id)
+    {
+        reject(frame, "not addressed to this device");
+        return;
+    }
+    const char *problem = take_session(via::espnow, fields.source, content,
+        now);
+    if (problem)
+    {
+        reject(frame, problem);
+    }
+}
 
 void handle(const radio::received_frame &frame, uint32_t now)
 {
@@ -549,7 +472,7 @@ bool start()
     {
         if (peers[peer].link.paired())
         {
-            start_session(peer, now);
+            start_session(via::espnow, peer, now);
         }
     }
     return true;
@@ -614,7 +537,7 @@ void loop()
         handle(frame, now);
     }
     service_handset(now);
-    service_sessions(now);
+    service_sessions(via::espnow, now, true);
     service_mesh(now);
     service_relay(now);
     service_lora(now);

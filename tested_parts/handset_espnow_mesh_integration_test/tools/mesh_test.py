@@ -18,35 +18,25 @@ Port 1 must be board 1 (the root). TEST names are the keys of TESTS below
 import sys
 import time
 
-from two_board_test import check, finish, open_boards, ui_line, voice
+import two_board_test
+from two_board_test import (check, connect_over, disconnect_over, finish,
+                            open_boards, ui_line, voice)
 
 B1 = B2 = None
 
 
 def mesh_connect(a, b, a_id, b_id):
     """a asks b over the mesh with serial commands; b accepts."""
-    s_a, s_b = a.mark(), b.mark()
-    a.send(f"mesh connect {b_id}")
-    if not b.wait(rf"MESH LINK request \| {a_id} .* over ESP-MESH", 8, s_b):
-        return False
-    b.send("accept")
-    return bool(a.wait(r"MESH LINK connected", 8, s_a) and
-                b.wait(r"MESH LINK connected", 2, s_b))
+    return connect_over("MESH", "mesh", a, b, a_id, b_id,
+                        r" .* over ESP-MESH", 2)
 
 
 def mesh_disconnect(a, b):
-    s_a, s_b = a.mark(), b.mark()
-    a.send("disconnect")
-    return bool(a.wait(r"MESH LINK disconnected", 8, s_a) and
-                b.wait(r"MESH LINK disconnected", 8, s_b))
+    return disconnect_over("MESH", a, b)
 
 
 def wait_idle(*boards):
-    for board in boards:
-        for _ in range(10):
-            if ui_line(board, r"(menu|espnow|mesh|lora|volume|status)\b"):
-                break
-            time.sleep(0.7)
+    two_board_test.wait_idle(boards, "menu|espnow|mesh|lora|volume|status")
 
 
 def to_mesh_list(board, peer):
