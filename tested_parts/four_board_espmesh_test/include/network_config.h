@@ -1,0 +1,60 @@
+#pragma once
+
+#include <stddef.h>
+#include <stdint.h>
+
+namespace network_config
+{
+// Channel 11, as stage 6, the relay voice test and both broadcast tests.
+// ESP-MESH runs on it too: one radio, so ESP-NOW and the mesh share it.
+constexpr uint8_t channel = 11;
+
+// The three-board demo reserves the root role for the relay.
+constexpr uint8_t demo_root_board = 3;
+
+// All three demo boards share this routerless mesh ID.
+constexpr uint8_t mesh_id[6] = {'S', 'E', '1', '9', 'M', 'H'};
+// ESP-NOW PHY rate, fixed at boot (TRACKING.md S2: one mechanism). Direct
+// unicast at 1 Mbps delivered 3,000/3,000 frames in stage 6; `radio CH
+// MBPS` changes it until the next reset.
+constexpr unsigned rate_mbps = 1;
+
+struct device
+{
+    uint8_t id;  // Source/destination field of every protected message.
+    uint8_t mac[6];  // Wi-Fi station MAC.
+    const char *name;  // Shown on screen; at most 12 characters.
+};
+
+// Up to five handsets, pre-paired: tested_parts/shared_keys/e2e_keys.h holds
+// a pair key for every pair of boards. Each board checks at boot that its
+// MAC matches the E2E_DEVICE_ID it was built for; frames from MACs not
+// listed are dropped.
+//
+// A slot with an all-zero MAC is not provisioned yet: no board can use
+// that ID, and the others leave it off their menus. To add a board, flash
+// any boardN build on it and read "Wi-Fi station MAC" from the boot log (or
+// esptool read_mac), put the MAC in a free slot, then flash that slot's
+// environment on it and rebuild the others so they list it.
+// IDs must be 1..device_count, in order.
+constexpr device devices[] = {
+    {1, {0xE0, 0x72, 0xA1, 0xD8, 0xE2, 0x10}, "Board 1"},
+    // Board 2 on USB serial 5B5F0215971, matching the other projects.
+    {2, {0xE0, 0x72, 0xA1, 0xD7, 0xFA, 0xB8}, "Board 2"},
+    // Given by the user on 2026-11-05 (the board on USB serial 5B5F021589).
+    // The e2e tests' board 3, E0:72:A1:D7:F6:50, was board 3 before; put it
+    // in a free slot to use it.
+    {3, {0xE0, 0x72, 0xA1, 0xD9, 0xA4, 0x94}, "Board 3"},
+    // Board 4 on USB serial 5B42019238.
+    {4, {0xE0, 0x72, 0xA1, 0xD8, 0x0E, 0x48}, "Board 4"},
+    // Given by the user on 2026-11-06; board 1 of the earlier e2e tests
+    // (e2e_broadcast_test, e2e_opus_test, ...).
+    {5, {0xE0, 0x72, 0xA1, 0xD5, 0x64, 0x0C}, "Board 5"},
+};
+constexpr size_t device_count = sizeof(devices) / sizeof(devices[0]);
+
+// Destination ID of a broadcast: every board at once, over ESP-NOW or LoRa
+// (the group destination of e2e_broadcast_test).
+constexpr uint8_t broadcast_id = 255;
+static_assert(device_count < broadcast_id, "board IDs reach broadcast_id");
+}
