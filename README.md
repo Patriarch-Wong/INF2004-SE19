@@ -21,6 +21,8 @@ Octal-SPI PSRAM) using PlatformIO with the Arduino framework, pinned to
 
 ```text
 INF2004-SE19/
+├── main/                     Main project: the handset ESP-NOW flood build (see below)
+│   └── shared_keys/          Copy of tested_parts/shared_keys (same keys)
 ├── esp32_s3n16r8_template/   Reusable PlatformIO starter for the N16R8 board
 └── tested_parts/             One standalone PlatformIO project per component test
     ├── button_test/          Debounced tactile button + LED
@@ -59,6 +61,17 @@ INF2004-SE19/
 Every directory containing a `platformio.ini` is an independent project with
 its own README covering wiring, configuration, build/upload steps, and
 measured results.
+
+## Main project
+
+[`main/`](main/) is the team's main firmware: a copy of
+[`tested_parts/handset_espnow_flood_integration_test`](tested_parts/handset_espnow_flood_integration_test/)
+(a59574f), the handset build with the ESP-NOW flood mesh, LoRa texts and
+the ESP-NOW and LoRa broadcasts. Its keys are in
+[`main/shared_keys`](main/shared_keys/), a copy of
+[`tested_parts/shared_keys`](tested_parts/shared_keys/) with the same keys;
+keep the two the same. Build it with `cd main && pio run -e board1` (environments
+`board1` to `board5`).
 
 ## Hardware
 
