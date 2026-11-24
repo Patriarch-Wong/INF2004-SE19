@@ -84,18 +84,28 @@ void test_hop_limit()
     head.path_length = 1;
     head.path[0] = 1;
     check(hops_ok(head, max_hops), "a frame from its origin is within limit");
-    // Relayed along the way, as relay_forward() does.
+    // Relayed along the way by boards 2, 3, ..., as relay_forward() does.
     unsigned transmissions = 1;
-    while (head.ttl > 1 && head.path_length < max_path)
+    while (add_hop(&head, static_cast<uint8_t>(head.path_length + 1)))
     {
-        --head.ttl;
-        head.path[head.path_length] = static_cast<uint8_t>(
-            head.path_length + 1);
-        ++head.path_length;
         ++transmissions;
         check(hops_ok(head, max_hops), "each relayed copy is within limit");
     }
     check(transmissions == max_hops, "a frame is sent max_hops times");
+    check(head.ttl == 1 && head.path_length == max_hops &&
+            head.path[0] == 1 && head.path[max_hops - 1] == max_hops,
+        "the last copy lists every board it passed, in order");
+    const envelope last = head;
+    check(!add_hop(&head, 9) && head.ttl == last.ttl &&
+            head.path_length == last.path_length,
+        "a frame out of hops is not passed on, and is left as it was");
+    envelope full = {};
+    full.marker = marker_flood;
+    full.ttl = 3;
+    full.path_length = max_path;
+    check(!add_hop(&full, 9) && full.ttl == 3 &&
+            full.path_length == max_path,
+        "a full path takes no more boards");
     head.ttl = 2;
     check(!hops_ok(head, max_hops),
         "a TTL raised at the last hop is refused");
@@ -104,6 +114,41 @@ void test_hop_limit()
     check(!hops_ok(head, max_hops), "a TTL raised at the origin is refused");
     head.ttl = max_hops - 1;
     check(hops_ok(head, max_hops), "a lowered TTL only shortens the reach");
+}
+
+// What a board does with a frame from board 1 for board 2 that passed
+// relay 3, depending on which board it is and who it heard the copy from.
+void test_classify()
+{
+    envelope head = {};
+    head.marker = marker_flood;
+    head.ttl = 3;
+    head.path_length = 2;
+    head.path[0] = 1;
+    head.path[1] = 3;
+    check(classify(head, 1, 2, 3, 2) == arrival::deliver,
+        "the destination takes the frame");
+    check(classify(head, 1, 2, 3, 4) == arrival::pass_on,
+        "another board passes it on");
+    check(classify(head, 1, 2, 3, 1) == arrival::own,
+        "the origin drops its own frame coming back");
+    check(classify(head, 1, 2, 3, 3) == arrival::looped,
+        "a board already on the path drops it");
+    check(classify(head, 1, 2, 4, 5) == arrival::bad_path,
+        "a path that doesn't end at the board it came from is refused");
+    check(classify(head, 4, 2, 3, 5) == arrival::bad_path,
+        "a path that doesn't start at the frame's source is refused");
+    // The destination is on nobody's path, so a copy for it that came back
+    // round is still told by the duplicate filter, not here.
+    head.path_length = 1;
+    check(classify(head, 1, 2, 1, 2) == arrival::deliver &&
+            classify(head, 1, 2, 1, 3) == arrival::pass_on,
+        "a frame heard straight from its origin is taken or passed on");
+    check(classify(head, 1, 2, 3, 4) == arrival::bad_path,
+        "a one-board path heard from another board is refused");
+    head.path_length = 0;
+    check(classify(head, 1, 2, 1, 4) == arrival::bad_path,
+        "an empty path is refused");
 }
 
 void test_frame_key()
@@ -163,6 +208,7 @@ int main()
 {
     test_envelope();
     test_hop_limit();
+    test_classify();
     test_frame_key();
     test_seen_cache();
     test_replay_under_next_id();

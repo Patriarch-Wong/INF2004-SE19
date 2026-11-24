@@ -78,7 +78,7 @@ struct relay_net
     uint32_t rejected = 0;
     uint32_t blocked = 0;
     uint32_t hop_drops = 0;   // Out of hops (TTL).
-    uint32_t busy_drops = 0;  // Not passed on: this board had a connection.
+    uint32_t busy_drops = 0;  // Not passed on: this board was connected.
     uint32_t no_route = 0;    // Routed: nowhere to send it.
     uint32_t send_errors = 0;
     uint32_t requests = 0;    // Routed: route requests this board sent.
@@ -730,9 +730,9 @@ void service_relay_queue(uint32_t now)
         {
             ++relay_muted_tx;  // Muted while it waited.
         }
-        else if (any_connection())
+        else if (any_connected())
         {
-            ++flood_net.busy_drops;  // A connection began while it waited.
+            ++flood_net.busy_drops;  // This board connected while it waited.
         }
         else if (radio::send(radio::broadcast_mac, slot.bytes, slot.size) ==
             ESP_OK)
@@ -748,24 +748,23 @@ void service_relay_queue(uint32_t now)
 
 // Passes a frame for another board on: the flood mesh broadcasts it again
 // after a random wait, the routed relay hands it to the next hop toward
-// its destination. A board with a connection of its own (asking, asked or
-// connected, over any radio) passes nothing on: its radio time is for that
-// connection. Frames addressed to it are still taken (relay_deliver()).
+// its destination. A connected board (over any radio) passes nothing on:
+// its radio time is for that connection. One only asking or asked still
+// relays (any_connected()). Frames addressed to it are always taken
+// (relay_deliver()).
 void relay_forward(relay_net &net, relay_frame::envelope head,
     const secure_message::header &fields, uint32_t now)
 {
-    if (any_connection())
+    if (any_connected())
     {
         ++net.busy_drops;
         return;
     }
-    if (head.ttl <= 1 || head.path_length >= relay_frame::max_path)
+    if (!relay_frame::add_hop(&head, own_id))
     {
         ++net.hop_drops;
         return;
     }
-    --head.ttl;
-    head.path[head.path_length++] = own_id;
     const uint8_t *mac = radio::broadcast_mac;
     if (net.link == via::routed)
     {
@@ -833,7 +832,9 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
         relay_reject(net, frame, secure_message::status_name(verified));
         return true;
     }
-    if (fields.source == own_id)
+    const relay_frame::arrival what = relay_frame::classify(head,
+        fields.source, fields.destination, sender, own_id);
+    if (what == relay_frame::arrival::own)
     {
         ++net.copies;  // This board's own frame, back from a relay.
         return true;
@@ -846,19 +847,15 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
     }
     // The path must start at the sender of the frame inside and end at the
     // board this copy came from; this board on it means a loop.
-    if (head.path[0] != fields.source ||
-        head.path[head.path_length - 1] != sender)
+    if (what == relay_frame::arrival::bad_path)
     {
         relay_reject(net, frame, "path doesn't match the frame");
         return true;
     }
-    for (size_t i = 0; i < head.path_length; ++i)
+    if (what == relay_frame::arrival::looped)
     {
-        if (head.path[i] == own_id)
-        {
-            ++net.copies;
-            return true;
-        }
+        ++net.copies;
+        return true;
     }
     // Told apart by the hop tag just checked, not by the envelope's ID,
     // which anyone could set (relay_frame.h).
@@ -869,7 +866,7 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
         ++net.copies;
         return true;
     }
-    if (fields.destination == own_id)
+    if (what == relay_frame::arrival::deliver)
     {
         relay_deliver(net, frame, head, fields, now);
     }
@@ -1104,10 +1101,11 @@ void setup_relay()
     }
     routed_net.muted = true;
     Serial.printf("RELAY ESP-NOW multi-hop: flood mesh | up to %u hops | "
-                  "relays wait up to %lu ms | no router, no root | routed "
-                  "relay off in this build\n",
+                  "relays wait up to %lu ms | voice pairs %s | no router, no "
+                  "root | routed relay off in this build\n",
         app_config::relay_max_hops,
-        static_cast<unsigned long>(app_config::relay_jitter_ms));
+        static_cast<unsigned long>(app_config::relay_jitter_ms),
+        flood_pair ? "on" : "off");
     const uint32_t now = millis();
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
@@ -1170,6 +1168,17 @@ void relay_set_muted(relay_net &net, bool on)
         static_cast<unsigned long>(relay_muted_rx));
 }
 
+// Flood voice in pairs (app_config::flood_pair_default): this board's own
+// streams, from the next frame. The receiving board needs no setting.
+void flood_set_pair(bool on)
+{
+    flood_pair = on;
+    Serial.printf("FLOOD pair %s%s\n",
+        on ? "on (25 packets a second, each frame sent once)" :
+             "off (50 packets a second, each with the frame before it)",
+        on && !redundancy ? " | no effect while redundancy is off" : "");
+}
+
 // Serial commands. accept, decline and disconnect act on the flood or
 // routed connection while one is in progress; hello, talk, test and stop
 // follow it on their own (voice_via()).
@@ -1193,6 +1202,12 @@ bool run_relay_command(const char *line, uint32_t now)
         if (strcmp(rest, " mute on") == 0 || strcmp(rest, " mute off") == 0)
         {
             relay_set_muted(net, strcmp(rest, " mute on") == 0);
+            return true;
+        }
+        if (net.link == via::flood &&
+            (strcmp(rest, " pair on") == 0 || strcmp(rest, " pair off") == 0))
+        {
+            flood_set_pair(strcmp(rest, " pair on") == 0);
             return true;
         }
         if (strncmp(rest, " connect", 8) == 0 &&

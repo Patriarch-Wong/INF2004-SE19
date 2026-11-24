@@ -83,6 +83,39 @@ bool hops_ok(const envelope &head, uint8_t max_hops)
         static_cast<unsigned>(max_hops) + 1;
 }
 
+arrival classify(const envelope &head, uint8_t source, uint8_t destination,
+    uint8_t sender, uint8_t self)
+{
+    if (source == self)
+    {
+        return arrival::own;
+    }
+    if (!path_ok(head.path_length) || head.path[0] != source ||
+        head.path[head.path_length - 1] != sender)
+    {
+        return arrival::bad_path;
+    }
+    for (size_t i = 0; i < head.path_length; ++i)
+    {
+        if (head.path[i] == self)
+        {
+            return arrival::looped;
+        }
+    }
+    return destination == self ? arrival::deliver : arrival::pass_on;
+}
+
+bool add_hop(envelope *head, uint8_t self)
+{
+    if (head->ttl <= 1 || head->path_length >= max_path)
+    {
+        return false;
+    }
+    --head->ttl;
+    head->path[head->path_length++] = self;
+    return true;
+}
+
 bool build_route(const uint8_t *network_key, const route_message &message,
     uint8_t *out, size_t capacity, size_t *size)
 {

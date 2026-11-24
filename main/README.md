@@ -9,11 +9,11 @@ so `main/` builds on its own.
 
 That build is a copy of [handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/)
 cut down to **the ESP-NOW flood mesh, LoRa, Broadcast and LoRa broadcast**,
-plus Status and Tools. Two changes to how the flood mesh relays are below.
+plus Status and Tools. The changes to how the flood mesh relays are below.
 
 | Menu row | What it does | Reaches a board out of range |
 | --- | --- | --- |
-| **ESP-NOW flood** | Pick a board, it accepts; hold OK to talk (Opus), RIGHT hello, UP/DOWN volume | yes: every board without a connection of its own relays |
+| **ESP-NOW flood** | Pick a board, it accepts; hold OK to talk (Opus), RIGHT hello, UP/DOWN volume | yes: every board that isn't connected itself relays |
 | **LoRa** | Pick a board, it accepts; UP "Hello from Board N", DOWN "Bye from Board N", with receipts | no |
 | **Broadcast** | No connection: hold OK to talk to all, RIGHT "Hello all" | no: not relayed |
 | **LoRa broadcast** | No connection: UP "Hello all", DOWN "Bye all" | no |
@@ -150,7 +150,7 @@ Everything on the buttons can also be done from the serial monitor; see
 | Nothing on the serial monitor | Use the UART connector at 921600 baud |
 | Board doesn't start | RIGHT was held at reset (GPIO45), or BOOT is still held |
 | `Built for device N, but this board is device M` | The wrong environment is on this board, or its MAC is not in `include/network_config.h` |
-| A board never shows as online | It is off, on another build or channel, or reachable only through a board that is in a connection (such a board doesn't relay) |
+| A board never shows as online | It is off, on another build or channel, or reachable only through a board that is connected to another (a connected board doesn't relay) |
 | LoRa row shows a failed radio | Check the Core1121 wiring and antenna; the radio is retried every 5 s and the rest of the handset keeps working |
 | No sound | Raise the volume with UP on the connected screen; `m` on serial toggles mute |
 
@@ -178,10 +178,10 @@ transports were left in the source, not deleted.
 2. Every board that hears it checks the frame's **hop tag** (HMAC under the
    network key), drops it if it has seen that frame in the last 5 s or is
    already on its path, and otherwise broadcasts it again with itself
-   added to the path and one hop fewer. A board with a connection of its
-   own (asking, asked or connected, over any radio) doesn't pass frames
-   on, presence pings included, so boards that reach each other only
-   through it show as offline until it is free.
+   added to the path and one hop fewer. A connected board (over either
+   radio) doesn't pass frames on, presence pings included, so boards that
+   reach each other only through it show as offline until it disconnects.
+   A board that is only asking or being asked still relays.
 3. Board 2 takes the first copy, opens it under the session key, and drops
    the later copies.
 
@@ -197,6 +197,9 @@ presence pings, connection messages, voice and hello all travel this way.
 | --- | --- | --- |
 | Telling a copy from a new frame | By the envelope's ID, which is not authenticated | By the frame's hop tag, already checked with the network key |
 | When a board relays | At once | After a random 0–20 ms (`relay_jitter_ms`) |
+| Which boards relay | Every board without a connection, a request counting as one | Every board that isn't connected; one asking or being asked still relays |
+| Asking again for a missing voice frame | After 40 ms, as over direct ESP-NOW | After 100 ms (`relay_nack_retry_us`) |
+| Voice packets | 50 a second, each with the frame before it | The same, or 25 a second with `flood pair on` |
 
 **Copies.** The envelope's ID counts up in the clear and nothing signs it.
 Anyone with a radio could replay one old frame under the ID of a frame not
@@ -217,6 +220,31 @@ redundancy and NACKs cover. It adds 10 ms a hop on average. Boards that do
 hear each other already took turns (Wi-Fi's carrier sense). Set
 `relay_jitter_ms` to 0 in `include/app_config.h` to relay at once as
 before.
+
+**Which boards relay.** A request waits up to 30 s for an answer, and a
+connection is given up as lost after 6 s of silence. While a request
+counted as a connection, asking a board that was relaying for two others
+ended their connection before anyone had answered. Now only a connected
+board stops relaying.
+
+**Asking again.** A board asks again for a missing voice frame (NACK) if
+the frame hasn't come. Each relay holds the NACK and the frame sent again
+for up to 20 ms, so across two relays the answer can take 80 ms. Asking
+again after 40 ms, every board flooded a second NACK and a second copy of
+the frame, just when frames were being lost. 100 ms leaves three tries
+inside the 300 ms playout buffer.
+
+**Voice packets.** Airtime is what limits a flood mesh: with six boards in
+range a talker's 50 packets a second become 250 on the channel, about 40%
+of it at 1 Mbps. `flood pair on` (serial, on the board that talks) sends
+every other frame with the one before it, as the ESP-MESH builds do: 25
+packets a second of the same size, so half the airtime. Each frame then
+goes once, so a lost packet costs two frames and only a NACK brings them
+back. It is off by default (`flood_pair_default`) and lasts until the next
+reset; try it if voice breaks up with many boards in range. A faster
+ESP-NOW rate is not the fix: broadcasts lost 10–27% of frames at 6 Mbps
+and almost none at 1 Mbps (`TRACKING.md` A1), and every flood frame is a
+broadcast.
 
 Considered and left out: a board cancelling its relay once it hears
 another board relay the same frame. It halves the airtime when every board
@@ -242,8 +270,8 @@ sh tests/run_handset_tests.sh    # T5, T6, T8
 | T3 | Each board gets its own firmware | No two `firmware.bin` files are the same |
 | T4 | The PC and test scripts are valid | `tools/*.py` compile, `tests/*.sh` parse |
 | T5 | The menu is cut down (`tests/cutdown_test.py`, reads the source) | Menu rows are ESP-NOW flood, LoRa, Broadcast, LoRa broadcast, Status, Tools; Tools has the rate, Mute flood, Mute LoRa; ESP-MESH and the routed relay are not started |
-| T6 | The settings are sane (`tests/config_test.cpp`) | Board IDs in order, no MAC twice, names fit the screen, the largest voice frame fits a flood envelope |
-| T7 | Flood duplicate filter and hop limit (`tests/relay_frame_test.cpp`) | A copy is dropped; a frame replayed under the next ID doesn't block the real one; a hop count raised on the way is refused |
+| T6 | The settings are sane (`tests/config_test.cpp`) | Board IDs in order, no MAC twice, names fit the screen, the largest voice frame fits a flood envelope, the wait before asking again for a voice frame covers two relays |
+| T7 | Flood duplicate filter, hop limit and what a board does with a frame (`tests/relay_frame_test.cpp`) | A copy is dropped; a frame replayed under the next ID doesn't block the real one; a hop count raised on the way is refused; a frame is sent 4 times and no more; the destination takes it, another board passes it on, the origin and boards on its path drop it, a path that doesn't match is refused |
 | T8 | The inherited host suites: crypto, sessions, connections, LoRa texts, voice link, audio DSP, key file | Each prints `All ... passed` |
 | T9 | A hello replayed during a handshake (`tests/session_test.cpp`) | One replayed between the reply and the confirm doesn't stop the session, with the confirm or without it; three don't either; four do, and a new handshake recovers |
 | T10 | A session is bound to its transport (`tests/session_test.cpp`) | A reply or confirm made for LoRa is refused on the flood mesh and the other way round; the same pair key and nonces give a different session key on each |
@@ -260,11 +288,12 @@ this build doesn't have, so its ESP-NOW and mixed cases won't run here.
 ## Serial commands (optional)
 
 `help` lists them. For the flood mesh: `flood`, `flood connect N`,
-`flood mute on|off`, `relay block N`, `relay unblock N`. `accept`,
-`decline`, `disconnect`, `hello`, `talk`, `test` and `stop` act on the
-connection in progress. The `flood` line counts frames sent, relayed,
-dropped as copies and delivered, and `busy drops`: frames for other boards
-this board didn't pass on because it had a connection of its own.
+`flood mute on|off`, `flood pair on|off`, `relay block N`,
+`relay unblock N`. `accept`, `decline`, `disconnect`, `hello`, `talk`,
+`test` and `stop` act on the connection in progress. The `flood` line
+counts frames sent, relayed, dropped as copies and delivered, and
+`busy drops`: frames for other boards this board didn't pass on because it
+was connected itself.
 
 Broadcast, LoRa and the log lines are as in
 [handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/README.md#serial-commands-optional).
@@ -316,24 +345,29 @@ Accepted for a test project, and not defended:
   key reads its broadcasts and could send one in its name.
 - **The flood envelope is not signed.** Its hop count and path change at
   every relay, so anyone can rewrite them. That can cut short how far a
-  frame travels and change what the route line shows. It can't send a
-  frame further: a relay refuses a hop count higher than the path allows
-  (`hops_ok()`), so 4 transmissions stays the limit.
+  frame travels and change what the route line shows. It can't make the
+  boards send a frame further: a relay refuses a hop count higher than the
+  path allows (`hops_ok()`), so 4 transmissions stays the limit for each
+  time a frame is put on the air. Someone who sends a recorded frame again
+  with a new envelope starts another 4, as in the replay point above.
 
 ## Limits
 
 - **Not run on hardware yet** as a flood mesh; the results above are builds
   and host tests.
 - **Half duplex.** One side talks at a time.
-- **One connection at a time per board**, over either radio. A board in a
-  connection doesn't relay, so boards that reach each other only through
-  it are cut off until it is free.
+- **One connection at a time per board**, over either radio. A connected
+  board doesn't relay, so boards that reach each other only through it are
+  cut off until it disconnects, and a connection relayed through it ends
+  as link lost.
 - **At most 4 transmissions per frame** (`relay_max_hops`): up to three
   boards relay it on the way.
 - **Broadcasts are not relayed.** They reach only boards in direct range.
 - **LoRa carries text only**, "Hello" and "Bye"; voice is ESP-NOW only.
 - **Airtime.** Every board that hears a flood frame sends it once more, so
-  more boards in range means more traffic on the channel.
+  more boards in range means more traffic on the channel: about 40% of it
+  for one talker with six boards in range (an estimate, not measured).
+  `flood pair on` halves it ([Voice packets](#what-changed-in-the-flood-mesh)).
 - **Every board must run this build.** Its sessions are bound to their
   transport ([Security](#security)), so a board on this firmware and one
   on an earlier build, or on a `tested_parts` handset project, refuse each
@@ -368,8 +402,15 @@ Accepted for a test project, and not defended:
 - `include/relay_frame.h`, `src/relay_frame.cpp`, `src/relay.inc`:
   `hops_ok()`. The hop count isn't signed, so a relay now refuses one
   raised on the way.
-- `include/app_config.h`: `relay_jitter_ms`, `relay_queue_depth`, the
-  project name.
+- `src/relay.inc`, `src/handset.inc`: only a connected board stops
+  relaying (`any_connected()`); a request no longer counts.
+- `include/relay_frame.h`, `src/relay_frame.cpp`: `classify()` and
+  `add_hop()`, what a board does with a frame and how it passes one on,
+  moved out of `src/relay.inc` so the host tests cover them.
+- `src/handset.inc`: voice over the flood mesh asks again for a missing
+  frame after `relay_nack_retry_us`; `flood pair on|off` (`flood_pair`).
+- `include/app_config.h`: `relay_jitter_ms`, `relay_queue_depth`,
+  `relay_nack_retry_us`, `flood_pair_default`, the project name.
 - `include/network_config.h`: the board table of
   `handset_peer_mesh_integration_test`.
 - `tests/relay_frame_test.cpp` (new), in `tests/run_host_tests.sh`;

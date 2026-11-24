@@ -53,6 +53,7 @@ enum class via : uint8_t
 uint8_t peer_id = own_id == 1 ? 2 : 1;
 uint32_t playout_ms = app_config::playout_default_ms;
 bool redundancy = app_config::redundancy_default;
+bool flood_pair = app_config::flood_pair_default;
 bool mic_report = false;
 uint32_t mic_seconds_shown = 0;
 
@@ -79,7 +80,8 @@ uint32_t tx_last_end_ms = 0;
 voice_link::history sent;
 // Over ESP-MESH only every other frame is sent, carrying the one before
 // it (redundancy): through the root the mesh carries about 30 packets a
-// second, not voice's 50 (2026-11-06). The frame waiting for its partner.
+// second, not voice's 50 (2026-11-06). The flood mesh does the same while
+// flood_pair is on, to halve its airtime. The frame waiting for its partner.
 bool tx_held = false;
 uint32_t tx_held_sequence = 0;
 constexpr unsigned retransmit_capacity = 64;
@@ -266,6 +268,23 @@ bool busy_elsewhere(const call::machine &mine)
 bool any_connection()
 {
     return calls.current() != call::state::idle || busy_elsewhere(calls);
+}
+
+// A connection is up, over any radio: this board stops relaying flood
+// frames (relay.inc). While it is only asking or asked it still relays. A
+// request can wait 30 s for an answer, and a connection that goes through
+// this board is lost after 6 s without it, so anyone asking a relay would
+// end other boards' connections.
+bool any_connected()
+{
+    for (const call::machine *each : connections)
+    {
+        if (each->current() == call::state::connected)
+        {
+            return true;
+        }
+    }
+    return false;
 }
 
 // A random ID that is never 0 (0 means none).
@@ -916,7 +935,9 @@ void send_encoded(const encoded &frame)
     {
         send_held();  // Its partner was skipped by the codec.
     }
-    if (tx_via == via::mesh && redundancy && frame.sequence % 2 == 0)
+    const bool paired = tx_via == via::mesh ||
+        (tx_via == via::flood && flood_pair);
+    if (paired && redundancy && frame.sequence % 2 == 0)
     {
         tx_held = true;  // The next frame carries it.
         tx_held_sequence = frame.sequence;
@@ -1363,10 +1384,13 @@ void service_receiver(uint32_t now)
     }
     voice_link::nack request = {};
     bool ask = false;
+    // Across relays the answer takes longer (app_config).
+    const uint32_t retry_us = rx_via == via::flood || rx_via == via::routed ?
+        app_config::relay_nack_retry_us : app_config::nack_retry_us;
     {
         rx_guard hold;
-        ask = incoming.next_nack(esp_timer_get_time(),
-            app_config::nack_retry_us, app_config::nack_max_tries, &request);
+        ask = incoming.next_nack(esp_timer_get_time(), retry_us,
+            app_config::nack_max_tries, &request);
         // No end message and nothing new for a while: end the stream after
         // what has arrived.
         const uint32_t top = incoming.highest();

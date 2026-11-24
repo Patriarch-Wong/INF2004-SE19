@@ -312,7 +312,8 @@ void print_help()
     Serial.println("D-pad: press NAME [MS] | hold NAME | release [NAME] | "
                    "ui (NAME: up down left right ok cancel ptt)");
     Serial.println("Flood mesh: flood | flood connect N | flood mute "
-                   "on|off | relay block N | relay unblock N (accept, "
+                   "on|off | flood pair on|off | relay block N | relay "
+                   "unblock N (accept, "
                    "decline, disconnect, hello, talk, test, stop and hold "
                    "OK work over it too)");
     Serial.println("LoRa: lora | lora connect N | lora hello | lora bye "

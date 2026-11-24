@@ -339,6 +339,20 @@ constexpr uint32_t relay_seen_window_ms = 5000;
 constexpr uint32_t relay_jitter_ms = 20;
 // Frames that can wait their turn at once; one more is passed on at once.
 constexpr size_t relay_queue_depth = 12;
+// Voice over a relay way asks again for a missing frame after this long,
+// not nack_retry_us. A NACK and the frame sent again each wait at every
+// relay, so across two relays the answer can take 80 ms; asking again at
+// 40 ms would have every board flood a second NACK and a second copy of
+// the frame, just when frames are being lost. Still three tries inside the
+// default playout buffer.
+constexpr uint32_t relay_nack_retry_us = 100000;
+// Flood voice sends every other frame, carrying the one before it, as
+// ESP-MESH does: 25 packets a second instead of 50, so half the airtime
+// with every relay counted. Each frame then goes once, so a lost packet
+// costs two frames and only a NACK recovers them. Off: every frame goes,
+// with the one before it as a spare. `flood pair on|off` changes it until
+// the next reset; it needs redundancy on.
+constexpr bool flood_pair_default = false;
 // Routed relay route discovery: a request floods, the target answers back
 // along its path. Asked again after this long without an answer, this many
 // times, then left for the backoff.

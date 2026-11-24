@@ -90,6 +90,13 @@ void test_flood_limits()
     // over, for both directions of a call.
     check(relay_queue_depth >= 2 * (relay_jitter_ms / 20 + 1),
         "the relay queue holds the frames that arrive during one wait");
+    // A NACK and the frame sent again each wait at every relay on the way.
+    check(relay_nack_retry_us >= 2 * 2 * relay_jitter_ms * 1000,
+        "a missing frame isn't asked for twice before its answer can cross "
+        "two relays");
+    check(3 * (relay_nack_retry_us / 1000) <= playout_default_ms,
+        "a missing frame can be asked for three times inside the playout "
+        "buffer");
     check(presence_timeout_ms > 3 * presence_ping_ms,
         "three missed pings pass before a board shows offline");
 }

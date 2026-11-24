@@ -85,6 +85,27 @@ bool parse(const uint8_t *bytes, size_t size, envelope *head);
 // (raised on the way, to make the frame travel further).
 bool hops_ok(const envelope &head, uint8_t max_hops);
 
+// What a board does with an envelope whose frame passed its hop tag.
+enum class arrival : uint8_t
+{
+    own,       // This board's own frame, back from a relay: a copy.
+    bad_path,  // The path doesn't start at the frame's source, or doesn't
+               // end at the board this copy came from.
+    looped,    // This board is on the path already: a copy.
+    deliver,   // Addressed to this board.
+    pass_on,   // For another board.
+};
+
+// `source` and `destination` are the board IDs of the frame inside,
+// `sender` the board this copy was heard from, `self` this board.
+arrival classify(const envelope &head, uint8_t source, uint8_t destination,
+    uint8_t sender, uint8_t self);
+
+// Makes `head` the envelope `self` passes on: one transmission fewer and
+// `self` added to the path. False, `head` unchanged, when the frame is out
+// of hops or the path is full.
+bool add_hop(envelope *head, uint8_t self);
+
 enum : uint8_t
 {
     route_request = 1,
