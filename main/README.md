@@ -136,8 +136,11 @@ Before each upload hold **BOOT**, tap **RESET**, release **BOOT**; tap
    from Board N" and DOWN "Bye from Board N"; each shows `Delivered` or
    `Not delivered`.
 7. **Broadcast.** Menu → **Broadcast** needs no connection: hold OK to talk
-   to every board in range, RIGHT sends "Hello all". **LoRa broadcast**
-   sends "Hello all" (UP) and "Bye all" (DOWN).
+   to every board in range, RIGHT sends "Hello all". The boards that hear
+   the voice jump to their Broadcast page, which names the talking board as
+   `Host`. When the host presses CANCEL they all go back to the page they
+   were on ([Leaving a broadcast together](#leaving-a-broadcast-together)).
+   **LoRa broadcast** sends "Hello all" (UP) and "Bye all" (DOWN).
 
 Everything on the buttons can also be done from the serial monitor; see
 [Serial commands](#serial-commands-optional).
@@ -297,7 +300,33 @@ counts frames sent, relayed, dropped as copies and delivered, and
 was connected itself.
 
 Broadcast, LoRa and the log lines are as in
-[handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/README.md#serial-commands-optional).
+[handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/README.md#serial-commands-optional),
+plus `bcast close`: what CANCEL on the Broadcast page sends, for a board
+that talked with `bcast talk` or `bcast test` from another page. The
+`bcast` status ends with the board this one follows.
+
+## Leaving a broadcast together
+
+A board brought to the Broadcast page by another board's voice follows
+that board, its **host**. The follower leaves the page, back to the one it
+was on, when:
+
+| The host | The follower's banner | How it knows |
+|---|---|---|
+| presses CANCEL, or accepts a connection | `Board N ended broadcast` | A close frame, broadcast 4 times 60 ms apart after the last voice frame, sealed under the host's broadcast key |
+| restarts | `Board N restarted` | The host's new broadcast key arrives |
+| is switched off or out of range | `Board N is out of range` | No presence ping and no broadcast from it for 6.5 s |
+
+- A board that opened the page from its own menu follows no one, so
+  nobody's close moves it.
+- A follower that presses CANCEL leaves alone. If it had talked back, the
+  boards that only its voice brought to the page leave with it.
+- A close is taken during a connection too, so a follower that took a
+  call doesn't come back to an empty Broadcast page.
+- A follower that misses all four copies stays until CANCEL; at the 27%
+  loss measured for broadcasts that is 1 time in 190.
+- Any board holding the host's broadcast key could send a close in its
+  name ([Security](#security): a broadcast key is shared).
 
 ## Security
 
@@ -380,6 +409,10 @@ Accepted for a test project, and not defended:
 
 ## What changed from handset_broadcast_integration_test
 
+- `src/broadcast.inc`, `src/ui.inc`: a broadcast's listeners leave the
+  Broadcast page when its host does
+  ([Leaving a broadcast together](#leaving-a-broadcast-together)); the
+  `bcast close` command.
 - `src/ui.inc`: the menu and Tools rows listed above; the Status page
   without the ESP-MESH and routed lines; the flood row is labelled
   `ESP-NOW flood`.

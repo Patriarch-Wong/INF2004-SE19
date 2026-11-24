@@ -303,4 +303,10 @@ constexpr uint32_t lora_broadcast_key_retry_ms = 4000;
 // connection is in progress, is logged at most this often per board, as
 // voice is 50 frames a second.
 constexpr uint32_t broadcast_log_gap_ms = 2000;
+// A board that talked to all says so when it leaves the Broadcast page, and
+// the boards its voice brought there leave too. A broadcast gets no
+// acknowledgement, so the frame goes this many times, this far apart: at
+// the 27% loss measured for broadcasts, all four are lost 1 time in 190.
+constexpr uint8_t broadcast_close_copies = 4;
+constexpr uint32_t broadcast_close_gap_ms = 60;
 }

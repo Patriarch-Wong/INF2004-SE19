@@ -117,6 +117,7 @@ uint32_t rx_stale = 0;
 uint32_t rx_last_end_ms = 0;  // When the last incoming stream ended.
 uint32_t rx_not_in_call = 0;
 uint32_t rx_broadcasts = 0;  // Broadcast streams started; the UI follows.
+uint8_t rx_broadcast_from = 0;  // The board that started the last one.
 bool rx_end_seen = false;
 bool rx_cut = false;  // Ended early by drop_old_streams(); no roger beep.
 std::atomic<int64_t> rx_play_at_us{0};  // 0 when no stream.
@@ -355,6 +356,8 @@ constexpr uint8_t kind_broadcast_key = 6;
 constexpr uint8_t kind_broadcast_key_ok = 7;
 static_assert(kind_broadcast_key > kind_presence,
     "broadcast key kind clashes with another payload kind");
+// In a broadcast: the sender left the Broadcast page (broadcast.inc).
+constexpr uint8_t kind_broadcast_close = 8;
 
 const char *device_name(uint8_t id);
 
@@ -1221,6 +1224,7 @@ void on_voice(via link, uint8_t source, const uint8_t *payload, size_t size,
         if (link == via::broadcast)
         {
             ++rx_broadcasts;
+            rx_broadcast_from = source;
         }
     }
 }

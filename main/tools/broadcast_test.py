@@ -43,6 +43,37 @@ def to_menu_row(board, label):
     return False
 
 
+def to_menu(board):
+    """Brings `board` to the top menu."""
+    for _ in range(8):
+        screen, _selected = board.ui()
+        if screen == "menu":
+            return True
+        if screen == "disconnected":
+            time.sleep(1.0)
+        else:
+            board.press("cancel", 0.6)
+    return False
+
+
+def host_talks(seconds):
+    """Board 2 on the menu, board 1 on its Broadcast page talking for
+    `seconds`: board 2 follows it there."""
+    if not check(to_menu(B2) and to_menu_row(B1, "Broadcast") and
+                 bool(ui_line(B1, r"broadcast \|")),
+                 "board 2 on the menu, board 1 on the Broadcast page"):
+        return False
+    since = B2.mark()
+    B1.send(f"press ok {seconds * 1000}")
+    ok = check(bool(B2.wait(r"^BCAST following 1 ", 5, since)),
+               "board 2 follows board 1")
+    check(bool(B2.wait(r"RX_END .* intact=yes", seconds + 9, since)),
+          "board 2 played the whole stream")
+    check(bool(ui_line(B2, r"broadcast \|.* host 1")),
+          "board 2 shows the Broadcast page, host board 1")
+    return ok
+
+
 def test_keys():
     print("B1 broadcast keys reach the other board over each radio",
           flush=True)
@@ -159,6 +190,45 @@ def test_reboot():
           "board 2 hears board 1's broadcasts again")
 
 
+def test_leave():
+    print("B9 the host leaves the Broadcast page: its listener leaves too",
+          flush=True)
+    if not host_talks(2):
+        return
+    s1, s2 = B1.mark(), B2.mark()
+    B1.press("cancel", 0.6)
+    check(bool(B1.wait(r"^BCAST closed: telling every board", 3, s1)),
+          "board 1 sent the close")
+    check(bool(B2.wait(r"^BCAST host 1 \(Board 1\) ended broadcast", 3,
+                       s2)), "board 2 took it")
+    check(bool(ui_line(B2, r"menu\b")), "board 2 is back on the menu")
+    check(bool(ui_line(B1, r"menu\b")), "board 1 is on the menu")
+
+    print("B10 a listener that leaves takes no one with it", flush=True)
+    if not host_talks(2):
+        return
+    s1 = B1.mark()
+    B2.press("cancel", 0.6)
+    check(bool(ui_line(B2, r"menu\b")), "board 2 left")
+    time.sleep(1.0)
+    check(B1.find(r"^BCAST host ", s1)[1] is None and
+          bool(ui_line(B1, r"broadcast \|")),
+          "board 1 stays on the Broadcast page")
+    B1.press("cancel", 0.6)
+
+
+def test_host_reboot():
+    print("B11 the host restarts: its listener leaves", flush=True)
+    if not host_talks(2):
+        return
+    s1, since = B1.mark(), B2.mark()
+    B1.send("reboot")
+    check(bool(B2.wait(r"^BCAST host 1 \(Board 1\) (restarted|is out of "
+                       r"range)", 40, since)), "board 2 saw the host go")
+    check(bool(ui_line(B2, r"menu\b")), "board 2 is back on the menu")
+    B1.wait(r"^BCAST key delivered to 2 ", 40, s1)  # For what runs next.
+
+
 TESTS = {
     "keys": test_keys,
     "hello": test_hello,
@@ -168,6 +238,8 @@ TESTS = {
     "lora": test_lora,
     "busy": test_busy,
     "reboot": test_reboot,
+    "leave": test_leave,
+    "host_reboot": test_host_reboot,
 }
 
 

@@ -19,7 +19,8 @@
 //   Broadcast       to every board over ESP-NOW, no connection: hold OK (or
 //                   PTT) to talk to all, RIGHT says hello to all, UP/DOWN
 //                   volume, CANCEL back. Shown by itself while another
-//                   board's broadcast plays (broadcast.inc).
+//                   board's broadcast plays; this board then leaves it
+//                   when that board does (broadcast.inc).
 //   LoRa broadcast  UP sends "Hello all from <this board>", DOWN "Bye all
 //                   from <this board>", to every board over LoRa
 //   Disconnected    why; any button or 3 s returns to the last list
@@ -208,6 +209,9 @@ uint32_t ui_drawn_lora_out = UINT32_MAX;
 bool ui_drawn_lora_notice = false;
 uint32_t ui_shown_delivery = 0;  // lora_delivery_count already shown.
 uint32_t ui_rx_broadcasts = 0;  // rx_broadcasts already followed.
+// The page another board's broadcast took this board from, to go back to.
+screen ui_broadcast_return = screen::menu;
+bool ui_broadcast_open = false;  // On the Broadcast page, not connected.
 
 // The connection the shared screens (connecting, request, disconnected)
 // are about: the one in progress, else the one that ended last.
@@ -1298,7 +1302,12 @@ bool heard_by_changed(const broadcast_net &net)
 void draw_broadcast(uint32_t now)
 {
     draw_title(way(via::broadcast).title, listen_color);
-    draw_text("To all boards", 8, 44, 2, highlight_color);
+    char line[20] = "To all boards";
+    if (broadcast_host != 0)
+    {
+        snprintf(line, sizeof(line), "Host: %s", device_name(broadcast_host));
+    }
+    draw_text(line, 8, 44, 2, highlight_color);
     lcd.drawFastHLine(8, 64, lcd.width() - 16, outline_color);
     draw_heard_by(espnow_broadcasts);
     draw_talk_box(now);
@@ -2071,6 +2080,10 @@ void print_ui(uint32_t now)
     {
         Serial.printf(" | box %s | %s", talk_view_name(current_view(now)),
             ui_drawn_heard_by);
+        if (broadcast_host != 0)
+        {
+            Serial.printf(" | host %u", broadcast_host);
+        }
     }
     if (shown == screen::lora_broadcast)
     {
@@ -2404,9 +2417,41 @@ void service_ui(uint32_t now)
     if (rx_broadcasts != ui_rx_broadcasts)
     {
         // Another board talks to all: show who (only with no connection,
-        // as broadcasts are not taken during one).
+        // as broadcasts are not taken during one). It brought this board
+        // here, so this board leaves when it does.
         ui_rx_broadcasts = rx_broadcasts;
-        page = screen::broadcast;
+        if (page != screen::broadcast)
+        {
+            ui_broadcast_return = page;
+            follow_broadcast(rx_broadcast_from);
+            page = screen::broadcast;
+        }
+    }
+    if (page == screen::broadcast && broadcast_host_left)
+    {
+        // The host closed, restarted or went out of range.
+        char line[sizeof(ui_toast_text)];
+        snprintf(line, sizeof(line), "%s %s", device_name(broadcast_host),
+            broadcast_host_left);
+        toast(line, highlight_color, now);
+        if (shown == screen::broadcast)
+        {
+            ptt_up_from_ui();  // Not a connection's, if one is up.
+        }
+        page = ui_broadcast_return;
+    }
+    // Leaving the page, or connecting from it, closes what this board
+    // broadcast (if it talked); off the page it follows no one.
+    const bool broadcast_open = page == screen::broadcast &&
+        !any_connected();
+    if (ui_broadcast_open && !broadcast_open)
+    {
+        close_broadcast(now);
+    }
+    ui_broadcast_open = broadcast_open;
+    if (page != screen::broadcast)
+    {
+        unfollow_broadcast();
     }
     const screen next = wanted_screen(now);
     if (next != shown)

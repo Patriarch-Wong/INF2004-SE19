@@ -316,8 +316,8 @@ void print_help()
                    "| lora log on|off | lora mute on|off|rx "
                    "(accept, decline, disconnect also work for LoRa)");
     Serial.println("Broadcast (to every board, no connection): bcast | "
-                   "bcast talk [S] | bcast test [S] | stop | bcast hello | "
-                   "lora bcast hello | lora bcast bye");
+                   "bcast talk [S] | bcast test [S] | stop | bcast close | "
+                   "bcast hello | lora bcast hello | lora bcast bye");
 }
 
 void run_command(const char *line, uint32_t now)

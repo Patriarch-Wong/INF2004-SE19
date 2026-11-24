@@ -17,6 +17,14 @@
 // never talked over; it logs that it ignored one. A broadcast can't be
 // sent from a connection either.
 //
+// Leaving together. A board brought to the Broadcast page by another
+// board's voice follows that board, its host. A board that talked to all
+// sends a close when it leaves the page (CANCEL, or a connection it
+// accepted), and every board following it goes back to the page it was on.
+// A follower also leaves when its host goes offline or restarts. A board
+// that opened the page itself follows no one; a follower that leaves by
+// CANCEL leaves alone.
+//
 // Keys. A pair session is shared by two boards only, so a broadcast can't
 // be sealed under one. Instead every board makes its own broadcast key
 // each boot, one per radio, and gives it to each paired board over their
@@ -52,6 +60,7 @@ struct broadcast_peer
     bool ignored_logged = false;
     uint32_t rejected_ms = 0;  // Last ESP-NOW REJECT log line.
     bool rejected_logged = false;
+    uint32_t heard_ms = 0;  // Its last broadcast that opened.
 };
 
 // One radio's broadcasts.
@@ -77,6 +86,14 @@ broadcast_net espnow_broadcasts("BCAST ", false);
 broadcast_net lora_broadcasts("LORA BCAST ", true);
 broadcast_net *const broadcast_nets[] = {&espnow_broadcasts,
     &lora_broadcasts};
+
+// Leaving together (the Broadcast page, ui.inc).
+uint8_t broadcast_host = 0;  // The board this one follows; 0: none.
+// Why the host is gone, until the UI has left the page.
+const char *broadcast_host_left = nullptr;
+bool broadcast_talked = false;  // Talked to all since the last close.
+uint8_t broadcast_closes_left = 0;
+uint32_t broadcast_close_next_ms = 0;
 
 // Key offer: kind, key ID, the sender's next counter, the key. Receipt:
 // kind, key ID. Numbers little-endian.
@@ -137,6 +154,54 @@ void key_holders(const broadcast_net &net, char *text, size_t capacity)
     {
         snprintf(text, capacity, " none");
     }
+}
+
+// Leaving together
+
+// This board was brought to the Broadcast page by `host`'s voice.
+void follow_broadcast(uint8_t host)
+{
+    broadcast_host = host;
+    broadcast_host_left = nullptr;
+    Serial.printf("BCAST following %u (%s): this board leaves the page when "
+                  "it does\n",
+        host, device_name(host));
+}
+
+// This board left the Broadcast page.
+void unfollow_broadcast()
+{
+    broadcast_host = 0;
+    broadcast_host_left = nullptr;
+}
+
+// The host is gone, `why` ("ended broadcast"): the UI leaves the page.
+void host_left(const char *why)
+{
+    if (broadcast_host == 0 || broadcast_host_left)
+    {
+        return;
+    }
+    broadcast_host_left = why;
+    Serial.printf("BCAST host %u (%s) %s\n", broadcast_host,
+        device_name(broadcast_host), why);
+}
+
+// This board left the Broadcast page: if it talked to all, the boards
+// following it are told (service_broadcast sends the copies). Returns
+// whether there was anything to close.
+bool close_broadcast(uint32_t now)
+{
+    if (!broadcast_talked)
+    {
+        return false;
+    }
+    broadcast_talked = false;
+    broadcast_closes_left = app_config::broadcast_close_copies;
+    broadcast_close_next_ms = now;
+    Serial.printf("BCAST closed: telling every board (%u frames)\n",
+        app_config::broadcast_close_copies);
+    return true;
 }
 
 // Keys
@@ -253,6 +318,10 @@ bool take_broadcast_key(bool lora, uint8_t source, const uint8_t *payload,
         state.first_counter = get_u32(payload + 5);
         memcpy(state.key, payload + 9, sizeof(state.key));
         state.window = replay_window();
+        if (!lora && source == broadcast_host)
+        {
+            host_left("restarted");  // What it said before is over.
+        }
         Serial.printf("%skey from %u (%s): %08lX, its broadcasts from "
                       "counter %lu\n",
             net.tag, source, device_name(source),
@@ -386,6 +455,18 @@ void handle_broadcast(const radio::received_frame &frame,
         log_reject(net.tag, net.rejected, frame.mac, frame.size, problem);
         return;
     }
+    net.peers[fields.source].heard_ms = now;
+    if (opened.type == secure_message::type_voice && size == 1 &&
+        payload[0] == kind_broadcast_close)
+    {
+        // Taken during a connection too, or this board would come back to
+        // a Broadcast page nobody is on. From another board: nothing.
+        if (fields.source == broadcast_host)
+        {
+            host_left("ended broadcast");
+        }
+        return;
+    }
     if (any_connection())
     {
         note_ignored(net, fields.source, now);
@@ -422,6 +503,8 @@ bool start_broadcast_talk(bool test, uint32_t frames, bool from_button)
     {
         return false;
     }
+    broadcast_talked = true;
+    broadcast_closes_left = 0;  // A close still going would end this one.
     char holders[24];
     key_holders(espnow_broadcasts, holders, sizeof(holders));
     Serial.printf("BCAST talking to all | boards with this board's key:%s\n",
@@ -627,10 +710,51 @@ void print_broadcast()
         }
         Serial.println();
     }
+    Serial.print("BCAST | following ");
+    if (broadcast_host != 0)
+    {
+        Serial.printf("%u (%s)", broadcast_host,
+            device_name(broadcast_host));
+    }
+    else
+    {
+        Serial.print("no board");
+    }
+    Serial.printf(" | talked to all since the last close: %s\n",
+        broadcast_talked ? "yes" : "no");
+}
+
+// Sends the close's copies, and sees that the host is still there: online
+// over its pair session, or heard in a broadcast, within the presence
+// timeout. The copies wait for the stream's last voice frame: a board that
+// frame brings to the page would otherwise have missed the close.
+void service_broadcast_close(uint32_t now)
+{
+    const bool voice_going = tx_via == via::broadcast &&
+        (tx == tx_phase::talking || tx == tx_phase::stopping);
+    if (broadcast_closes_left > 0 && !voice_going &&
+        static_cast<int32_t>(now - broadcast_close_next_ms) >= 0)
+    {
+        const uint8_t close[] = {kind_broadcast_close};
+        if (!radio_full(broadcast_send(close, sizeof(close),
+                secure_message::type_voice)))
+        {
+            --broadcast_closes_left;
+            broadcast_close_next_ms = now +
+                app_config::broadcast_close_gap_ms;
+        }
+    }
+    if (broadcast_host != 0 && !peer_online(broadcast_host, now) &&
+        !within_presence(espnow_broadcasts.peers[broadcast_host].heard_ms,
+            now))
+    {
+        host_left("is out of range");
+    }
 }
 
 void service_broadcast(uint32_t now)
 {
+    service_broadcast_close(now);
     service_broadcast_keys(espnow_broadcasts, now);
     if (lora_ready())
     {
@@ -663,6 +787,14 @@ bool run_broadcast_command(const char *line, uint32_t now)
     else if (sscanf(line, "bcast test %u %c", &value, &extra) == 1)
     {
         start_broadcast_talk(true, seconds_to_frames(value), false);
+    }
+    else if (strcmp(line, "bcast close") == 0)
+    {
+        if (!close_broadcast(now))
+        {
+            Serial.println("BCAST nothing to close: this board hasn't "
+                           "talked to all");
+        }
     }
     else if (strcmp(line, "bcast hello") == 0)
     {
