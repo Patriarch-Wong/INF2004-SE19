@@ -4,14 +4,14 @@
 #include <stdint.h>
 #include "secure_message.h"
 
-// ESP-NOW multi-hop (relay.inc): the envelope a secure_message frame
-// travels in when boards relay it, the routed relay's route messages, and
-// the duplicate filter. No radio or timing calls, so this runs in host
-// tests.
+// ESP-NOW flood mesh (relay.inc): the envelope a secure_message frame
+// travels in when boards relay it, and the duplicate filter. No radio or
+// timing calls, so this runs in host tests.
 //
-// Envelope (flood mesh and routed relay data):
+// Envelope:
 //   offset  size  field
-//   0       1     marker: 0xF1 flood, 0xF2 routed
+//   0       1     marker: 0xF1 (0xF2 and 0xF3 were the routed relay's, in
+//                 the builds that had one; don't reuse them)
 //   1       1     TTL: transmissions left, this one included
 //   2       2     ID, per origin, little-endian, for logs and sniffers
 //                 only: it isn't authenticated, so nothing trusts it
@@ -27,26 +27,9 @@
 // Copies of a frame are told by that tag (frame_key()), not by the
 // envelope's ID: anyone could replay an old frame under the ID of one not
 // sent yet, and every board would then drop the real one as a copy.
-//
-// Route message (routed relay, marker 0xF3):
-//   0       1     marker 0xF3
-//   1       1     kind: 1 request, 2 reply, 3 error
-//   2       1     origin: request/reply the board looking for a route;
-//                 error the board to tell
-//   3       1     target: the board looked for; error the unreachable one
-//   4       2     request ID, little-endian
-//   6       1     TTL (requests)
-//   7       1     path length n (1..max_path)
-//   8       n     request: boards it has passed, origin first; reply: the
-//                 whole route, origin first, target last; error: reporter
-//   8+n     16    HMAC-SHA256 under the network key, truncated, over
-//                 everything but TTL, and but the path in requests (which
-//                 grows at every hop)
 namespace relay_frame
 {
 constexpr uint8_t marker_flood = 0xF1;
-constexpr uint8_t marker_routed = 0xF2;
-constexpr uint8_t marker_route = 0xF3;
 constexpr size_t max_path = 6;
 constexpr size_t fixed_size = 5;
 constexpr size_t max_header_size = fixed_size + max_path;
@@ -54,14 +37,9 @@ constexpr size_t max_header_size = fixed_size + max_path;
 // with a full path.
 constexpr size_t max_inner_size =
     secure_message::max_frame_size - max_header_size;
-constexpr size_t route_fixed_size = 8;
-constexpr size_t route_tag_size = 16;
-constexpr size_t min_route_size = route_fixed_size + 1 + route_tag_size;
 
-static_assert(secure_message::version != marker_flood &&
-        secure_message::version != marker_routed &&
-        secure_message::version != marker_route,
-    "relay markers must not look like a secure_message frame");
+static_assert(secure_message::version != marker_flood,
+    "the relay marker must not look like a secure_message frame");
 
 struct envelope
 {
@@ -106,30 +84,6 @@ arrival classify(const envelope &head, uint8_t source, uint8_t destination,
 // of hops or the path is full.
 bool add_hop(envelope *head, uint8_t self);
 
-enum : uint8_t
-{
-    route_request = 1,
-    route_reply = 2,
-    route_error = 3,
-};
-
-struct route_message
-{
-    uint8_t kind;
-    uint8_t origin;
-    uint8_t target;
-    uint16_t request_id;
-    uint8_t ttl;
-    uint8_t path_length;
-    uint8_t path[max_path];
-};
-
-bool build_route(const uint8_t *network_key, const route_message &message,
-    uint8_t *out, size_t capacity, size_t *size);
-// Also checks the tag: false if anything was changed that it covers.
-bool parse_route(const uint8_t *network_key, const uint8_t *bytes,
-    size_t size, route_message *message);
-
 // What a relayed frame is remembered by: the first four bytes of the
 // secure_message frame's hop tag, which is different for every frame and
 // can't be made up without the network key. Call it only on a frame whose
@@ -137,8 +91,7 @@ bool parse_route(const uint8_t *network_key, const uint8_t *bytes,
 uint32_t frame_key(const uint8_t *inner, size_t inner_size);
 
 // Recently seen (origin, key) pairs, so each frame is relayed and delivered
-// once however many copies arrive. The key is frame_key() for relayed
-// frames, the request ID for route requests.
+// once however many copies arrive. The key is frame_key().
 class seen_cache
 {
 public:

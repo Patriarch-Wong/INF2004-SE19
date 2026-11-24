@@ -334,27 +334,6 @@ int16_t limit(float x)
     return static_cast<int16_t>(lrintf(x < 0 ? -y : y));
 }
 
-level measure(const float *samples, size_t count)
-{
-    level result = {0, 0};
-    if (count == 0)
-    {
-        return result;
-    }
-    double energy = 0;
-    for (size_t i = 0; i < count; ++i)
-    {
-        const float magnitude = fabsf(samples[i]);
-        energy += static_cast<double>(samples[i]) * samples[i];
-        if (magnitude > result.peak)
-        {
-            result.peak = magnitude;
-        }
-    }
-    result.rms = static_cast<float>(sqrt(energy / count));
-    return result;
-}
-
 level measure(const int16_t *samples, size_t count)
 {
     level result = {0, 0};

@@ -56,9 +56,8 @@ constexpr size_t pending_slots = 4;
 enum class transport : uint8_t
 {
     espnow = 1,  // Direct ESP-NOW.
-    mesh = 2,    // ESP-MESH.
+    // 2 was ESP-MESH and 4 the routed relay, in the builds that had them.
     flood = 3,   // ESP-NOW flood mesh.
-    routed = 4,  // ESP-NOW routed relay.
     lora = 5,
 };
 
@@ -89,7 +88,6 @@ enum class open_result
     error,
 };
 
-const char *event_name(event value);
 const char *open_result_name(open_result value);
 
 class link

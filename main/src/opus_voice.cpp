@@ -1,6 +1,5 @@
 #include "opus_voice.h"
 #include <math.h>
-#include <string.h>
 
 namespace opus_voice
 {
@@ -153,66 +152,6 @@ uint32_t tone_phase(uint32_t hz, uint32_t k)
     return static_cast<uint32_t>(
         (static_cast<uint64_t>(hz) * k << 32) / sample_rate_hz);
 }
-
-void put(uint8_t *p, uint64_t value, size_t n)
-{
-    for (size_t i = 0; i < n; ++i)
-    {
-        p[i] = static_cast<uint8_t>(value >> (8 * i));
-    }
-}
-
-uint64_t get(const uint8_t *p, size_t n)
-{
-    uint64_t value = 0;
-    for (size_t i = 0; i < n; ++i)
-    {
-        value |= static_cast<uint64_t>(p[i]) << (8 * i);
-    }
-    return value;
-}
-}
-
-bool build_payload(const frame_info &info, const uint8_t *packet,
-    size_t packet_size, uint8_t *payload, size_t capacity, size_t *size)
-{
-    if (!packet || !payload || !size || !packet_size ||
-        packet_size > max_packet_size || !info.stream_id || !info.frames ||
-        info.sequence >= info.frames ||
-        capacity < header_size + packet_size)
-    {
-        return false;
-    }
-    memcpy(payload, marker, marker_size);
-    put(payload + 8, info.stream_id, 4);
-    put(payload + 12, info.sequence, 4);
-    put(payload + 16, info.frames, 4);
-    put(payload + 20, info.capture_us, 8);
-    put(payload + 28, packet_size, 2);
-    memcpy(payload + header_size, packet, packet_size);
-    *size = header_size + packet_size;
-    return true;
-}
-
-bool parse_payload(const uint8_t *payload, size_t size, frame_info *info,
-    const uint8_t **packet, size_t *packet_size)
-{
-    if (!payload || !info || !packet || !packet_size || size <= header_size ||
-        memcmp(payload, marker, marker_size))
-    {
-        return false;
-    }
-    const size_t length = static_cast<size_t>(get(payload + 28, 2));
-    if (length != size - header_size || length > max_packet_size)
-    {
-        return false;
-    }
-    *info = {static_cast<uint32_t>(get(payload + 8, 4)),
-        static_cast<uint32_t>(get(payload + 12, 4)),
-        static_cast<uint32_t>(get(payload + 16, 4)), get(payload + 20, 8)};
-    *packet = payload + header_size;
-    *packet_size = length;
-    return info->stream_id && info->frames && info->sequence < info->frames;
 }
 
 int16_t test_sample(uint32_t n)
@@ -242,28 +181,6 @@ void test_frame(uint32_t sequence, int16_t *pcm)
     {
         pcm[i] = test_sample(first + i);
     }
-}
-
-uint32_t crc32(const uint8_t *data, size_t size)
-{
-    uint32_t crc = 0xFFFFFFFFu;
-    for (size_t i = 0; i < size; ++i)
-    {
-        crc ^= data[i];
-        for (int bit = 0; bit < 8; ++bit)
-        {
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
-        }
-    }
-    return ~crc;
-}
-
-bool on_time(uint32_t arrival, uint32_t sequence, uint32_t anchor,
-    uint32_t depth_us, uint32_t interval_us)
-{
-    return arrival != UINT32_MAX &&
-        static_cast<int64_t>(arrival) <= depth_us +
-            (static_cast<int64_t>(sequence) - anchor) * interval_us;
 }
 
 quality::quality(uint32_t lookahead_samples)

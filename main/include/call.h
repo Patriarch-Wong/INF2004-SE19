@@ -44,7 +44,6 @@ struct message
 bool build(const message &content, uint8_t *payload, size_t capacity,
     size_t *size);
 bool parse(const uint8_t *payload, size_t size, message *content);
-const char *op_name(uint8_t op);
 
 enum class state : uint8_t
 {

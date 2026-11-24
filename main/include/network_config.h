@@ -6,17 +6,7 @@
 namespace network_config
 {
 // Channel 11, as stage 6, the relay voice test and both broadcast tests.
-// ESP-MESH runs on it too: one radio, so ESP-NOW and the mesh share it.
 constexpr uint8_t channel = 11;
-
-// ESP-MESH without a router. ESP-WIFI-MESH normally elects as root the
-// board nearest the Wi-Fi router; with no router there is nothing to vote
-// on, so the boards take turns in a fixed order: this board, the preferred
-// root, forms the mesh when it is up, and if it is down the others take
-// over in ID order (app_config mesh_root_wait_ms, mesh.inc). The mesh never
-// connects to anything else. Every board must agree on both values.
-constexpr uint8_t mesh_root_id = 1;
-constexpr uint8_t mesh_id[6] = {'S', 'E', '1', '9', 'M', 'H'};
 // ESP-NOW PHY rate, fixed at boot (TRACKING.md S2: one mechanism). Direct
 // unicast at 1 Mbps delivered 3,000/3,000 frames in stage 6; `radio CH
 // MBPS` changes it until the next reset.

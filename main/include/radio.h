@@ -7,8 +7,7 @@
 #include "secure_message.h"
 
 // Wi-Fi station and ESP-NOW setup shared by the handsets and the relay:
-// MAC allowlist, receive queue, peers and print helpers. ESP-MESH
-// (mesh_radio.h) starts later on the Wi-Fi this brings up.
+// MAC allowlist, receive queue, peers and print helpers.
 namespace radio
 {
 struct received_frame
@@ -21,9 +20,8 @@ struct received_frame
 
 extern const uint8_t broadcast_mac[6];
 
-// The shortest frame anything here sends: a routed relay route message
-// (relay_frame.h) is shorter than a secure_message frame. Anything shorter
-// is dropped in the receive callback.
+// Anything shorter is dropped in the receive callback: every frame this
+// build sends is longer (a secure_message frame is 40 bytes at least).
 constexpr size_t min_frame_size = 25;
 
 // Starts station mode on the configured channel and ESP-NOW, with every
@@ -63,5 +61,4 @@ uint32_t queue_drops();
 uint32_t unknown_drops();
 
 void print_mac(const uint8_t *mac);
-void print_hex(const uint8_t *data, size_t size);
 }

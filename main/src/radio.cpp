@@ -101,11 +101,9 @@ bool add_peer(const uint8_t *mac)
     return check(esp_now_add_peer(&info), "Add peer");
 }
 
-// Wi-Fi without Arduino's WiFi class. Its event handler answers the first
-// station disconnect with WiFi.disconnect() and WiFi.begin(), which would
-// pull a mesh node off its parent (ESP-MESH runs on this station). No
-// network interfaces: nothing here uses IP, and both ESP-NOW and the
-// mesh's own packets sit below lwIP. esp_mesh.h still wants lwIP started.
+// Wi-Fi without Arduino's WiFi class and its event handler. No network
+// interfaces: nothing here uses IP, and ESP-NOW sits below lwIP. lwIP and
+// the event loop are started all the same, as in every run on the boards.
 bool start_wifi()
 {
     if (!check(esp_netif_init(), "Start lwIP"))
@@ -261,7 +259,7 @@ const char *configure(unsigned channel, unsigned rate_mbps)
     {
         error = "rate must be 1, 2, 5, 11, 6, 9, 12, 18, 24, 36, 48 or 54";
     }
-    // Only a real change: once ESP-MESH runs, it owns the channel.
+    // Only a real change.
     else if (channel != now_channel &&
         !check(esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE),
             "Set channel"))
@@ -333,13 +331,5 @@ void print_mac(const uint8_t *mac)
 {
     Serial.printf("%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2],
         mac[3], mac[4], mac[5]);
-}
-
-void print_hex(const uint8_t *data, size_t size)
-{
-    for (size_t i = 0; i < size; ++i)
-    {
-        Serial.printf("%02X", data[i]);
-    }
 }
 }

@@ -60,20 +60,6 @@ bool parse(const uint8_t *payload, size_t size, message *content)
     return content->call_id != 0;
 }
 
-const char *op_name(uint8_t op)
-{
-    switch (op)
-    {
-    case op_request: return "request";
-    case op_accept: return "accept";
-    case op_decline: return "decline";
-    case op_busy: return "busy";
-    case op_hang_up: return "hang_up";
-    case op_ping: return "ping";
-    default: return "unknown";
-    }
-}
-
 const char *state_name(state value)
 {
     switch (value)

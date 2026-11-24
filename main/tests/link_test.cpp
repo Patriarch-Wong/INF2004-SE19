@@ -141,8 +141,6 @@ void test_crc()
     crc = crc32_update(crc32_begin(), bytes, 4);
     crc = crc32_update(crc, bytes + 4, 5);
     check(crc32_end(crc) == 0xCBF43926u, "CRC-32 in pieces");
-    check(crc32_end(crc) == opus_voice::crc32(bytes, 9),
-        "matches opus_voice::crc32");
 }
 
 void test_history()

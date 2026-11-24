@@ -1,5 +1,5 @@
-"""Checks the cut-down menu in the source, so no board is needed: the menu
-and Tools rows, and that ESP-MESH and the routed relay are not started."""
+"""Checks the menu in the source, so no board is needed: the menu and Tools
+rows, and that ESP-MESH and the routed relay are not in the build."""
 import re
 import sys
 from pathlib import Path
@@ -34,16 +34,14 @@ def main() -> int:
     switches = re.findall(r"row_kind::(\w+)", tools.group(1)) if tools else []
     expect(switches == TOOLS, f"Tools switches are {TOOLS} (got {switches})")
 
-    main_cpp = code("main.cpp")
-    for call in ("setup_mesh", "service_mesh", "run_mesh_command",
-                 "print_mesh"):
-        expect(not re.search(rf"\b{call}\(", main_cpp),
-               f"main.cpp doesn't call {call}(): ESP-MESH isn't started")
-
-    relay = code("relay.inc")
-    expect("relay_nets[] = {&flood_net};" in relay,
-           "only the flood mesh is set up and serviced")
-    expect("routed_net.muted = true;" in relay, "the routed relay is muted")
+    for gone in ("mesh.inc", "mesh_radio.cpp"):
+        expect(not (SRC / gone).exists(), f"src/{gone} is gone: no ESP-MESH")
+    sources = "".join(code(path.name) for path in sorted(SRC.iterdir())
+                      if path.suffix in (".cpp", ".inc", ".h"))
+    for word in ("mesh_radio", "esp_mesh", "routed_", "via::mesh",
+                 "via::routed"):
+        expect(word not in sources,
+               f"no {word} in src/: ESP-MESH and the routed relay are out")
 
     expect('"ESP-NOW flood"' in code("handset.inc"),
            'the flood row is labelled "ESP-NOW flood"')

@@ -12,7 +12,7 @@
 //            broadcast page). One LoRa frame, heard by every board in
 //            range. No receipts: a board that missed it missed it.
 //
-// The peer-to-peer connections (ESP-NOW, ESP-MESH, the relay ways, LoRa)
+// The peer-to-peer connections (ESP-NOW, the flood mesh, LoRa)
 // are unchanged. A board in a connection takes no broadcast, so a call is
 // never talked over; it logs that it ignored one. A broadcast can't be
 // sent from a connection either.

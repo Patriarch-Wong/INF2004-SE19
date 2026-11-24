@@ -1,36 +1,23 @@
-// Included inside main.cpp's anonymous namespace, after mesh.inc.
+// Included inside main.cpp's anonymous namespace, after handset.inc.
 //
-// ESP-NOW multi-hop: everything ESP-NOW has (connections, push-to-talk
-// voice, RIGHT hello, presence), carried across boards that relay, in two
-// ways (relay_frame.h has the frames):
+// ESP-NOW flood mesh: everything ESP-NOW has (connections, push-to-talk
+// voice, RIGHT hello, presence), carried across boards that relay
+// (relay_frame.h has the frames). Every board re-broadcasts every frame it
+// hasn't seen before, up to relay_max_hops transmissions. All paths at
+// once: nothing to set up and nothing to repair, but each frame is sent
+// once by every board that hears it.
 //
-//   Flood mesh    Every board re-broadcasts every frame it hasn't seen
-//                 before, up to relay_max_hops transmissions. All paths at
-//                 once: nothing to set up and nothing to repair, but each
-//                 frame is sent once by every board that hears it.
-//   Routed relay  A board finds a path first (route discovery: its request
-//                 floods once, the target answers back along the path the
-//                 request took), then each frame goes hop by hop, unicast,
-//                 acknowledged by the radio, along that path only. A broken
-//                 path is reported back (route error) and found again; a
-//                 path in use is looked for again in the background so a
-//                 shorter one replaces it.
-//
-// Both are true mesh topologies: every board relays, and there is no root
-// and no router (ESP-NOW needs neither). Each has its own session key per
-// peer, made over itself, its own connections (call.h), presence pings and
-// route line, as ESP-MESH does (mesh.inc). Frames are sealed end to end as
-// over ESP-NOW; a relay checks the network-key hop tag before passing a
-// frame on, and can't open it.
+// A true mesh topology: every board relays, and there is no root and no
+// router (ESP-NOW needs neither). It has its own session key per peer, made
+// over itself, its own connections (call.h), presence pings and route
+// line. Frames are sealed end to end as over ESP-NOW; a relay checks the
+// network-key hop tag before passing a frame on, and can't open it.
 //
 // Serial `relay block N` makes this board ignore relayed frames heard
 // directly from board N, as if N were out of range, so a middleman can be
 // tested on one desk (block each way).
 
-static_assert(radio::min_frame_size <= relay_frame::min_route_size,
-    "the receive callback would drop route messages");
-
-// A board over a relay way: the session and presence state ESP-NOW keeps
+// A board over the flood mesh: the session and presence state ESP-NOW keeps
 // (peer_state), and the path its frames take.
 struct relay_peer : peer_state
 {
@@ -40,30 +27,14 @@ struct relay_peer : peer_state
     uint32_t heard_ms = 0;
 };
 
-// Routed relay: how this board reaches one board, and its discovery.
-struct relay_route
-{
-    bool valid = false;
-    uint8_t next_hop = 0;
-    uint8_t path_length = 0;
-    uint8_t path[relay_frame::max_path] = {};  // This board first.
-    uint32_t learned_ms = 0;
-    bool searching = false;  // A request is out, retried until answered.
-    uint8_t tries = 0;
-    uint32_t asked_ms = 0;
-    uint32_t refreshed_ms = 0;  // Last background request.
-};
-
 struct relay_net
 {
-    relay_net(const char *tag_in, via link_in, uint8_t marker_in,
-        call::machine &calls_in) :
-        tag(tag_in), link(link_in), marker(marker_in), calls(calls_in)
+    relay_net(const char *tag_in, via link_in, call::machine &calls_in) :
+        tag(tag_in), link(link_in), calls(calls_in)
     {
     }
-    const char *tag;  // Log prefix: FLOOD, ROUTED.
+    const char *tag;  // Log prefix: FLOOD.
     via link;
-    uint8_t marker;
     call::machine &calls;
     relay_peer peers[max_id + 1];  // Indexed by device ID.
     relay_frame::seen_cache seen;
@@ -79,34 +50,13 @@ struct relay_net
     uint32_t blocked = 0;
     uint32_t hop_drops = 0;   // Out of hops (TTL).
     uint32_t busy_drops = 0;  // Not passed on: this board was connected.
-    uint32_t no_route = 0;    // Routed: nowhere to send it.
     uint32_t send_errors = 0;
-    uint32_t requests = 0;    // Routed: route requests this board sent.
 };
 
-relay_net flood_net("FLOOD", via::flood, relay_frame::marker_flood,
-    flood_calls);
-relay_net routed_net("ROUTED", via::routed, relay_frame::marker_routed,
-    routed_calls);
-// Only the flood mesh runs in this build: the routed relay is off the menu,
-// so it is not set up, serviced or given serial commands, and it stays
-// muted (setup_relay()), which drops any routed frame another build sends.
-relay_net *const relay_nets[] = {&flood_net};
-
-// The routed relay's routes, by target, and the route requests it has
-// seen, by (origin, request ID): each is relayed once.
-relay_route routed_routes[max_id + 1];
-relay_frame::seen_cache routed_requests;
-uint16_t routed_request_id = 0;
-uint32_t routed_error_ms[max_id + 1] = {};  // Last route error, by target.
+relay_net flood_net("FLOOD", via::flood, flood_calls);
 uint32_t relay_blocked = 0;  // Bit N: ignore relayed frames from board N.
 uint32_t relay_muted_tx = 0;
 uint32_t relay_muted_rx = 0;
-
-relay_net &relay_of(via link)
-{
-    return link == via::routed ? routed_net : flood_net;
-}
 
 uint8_t relay_board_of(const uint8_t *mac)
 {
@@ -122,9 +72,9 @@ bool relay_is_blocked(uint8_t board)
 // A session is up and something from the board opened recently. Broadcast
 // and relayed frames get no end-to-end acknowledgement, so presence pings
 // are the only sign the board is reachable.
-bool relay_peer_online(via link, uint8_t peer, uint32_t now)
+bool relay_peer_online(uint8_t peer, uint32_t now)
 {
-    const relay_peer &state = relay_of(link).peers[peer];
+    const relay_peer &state = flood_net.peers[peer];
     return state.link.established() &&
         within_presence(state.last_accept_ms, now);
 }
@@ -134,401 +84,6 @@ void relay_reject(relay_net &net, const radio::received_frame &frame,
 {
     log_reject(way(net.link).tag, net.rejected, frame.mac, frame.size,
         reason);
-}
-
-// Routed relay: routes
-
-// The route to `target` if there is a usable one. One not refreshed for
-// the route lifetime is dropped here.
-relay_route *routed_route(uint8_t target, uint32_t now)
-{
-    if (target < 1 || target > max_id)
-    {
-        return nullptr;
-    }
-    relay_route &route = routed_routes[target];
-    if (!route.valid)
-    {
-        return nullptr;
-    }
-    if (now - route.learned_ms >= app_config::relay_route_lifetime_ms)
-    {
-        route.valid = false;
-        Serial.printf("ROUTED route to %u expired\n", target);
-        return nullptr;
-    }
-    return &route;
-}
-
-void routed_drop_via(uint8_t neighbour, const char *why)
-{
-    for (uint8_t id = 1; id <= max_id; ++id)
-    {
-        relay_route &route = routed_routes[id];
-        if (route.valid && route.next_hop == neighbour)
-        {
-            route.valid = false;
-            Serial.printf("ROUTED route to %u dropped: %s\n", id, why);
-        }
-    }
-}
-
-// Takes `path` (this board first, a listed board at every step) as the
-// route to its last board if there is none, it is shorter, the old one is
-// due for a refresh, or it answers this board's own request.
-void routed_learn(const uint8_t *path, size_t length, uint32_t now,
-    bool own_answer)
-{
-    if (length < 2 || length > relay_frame::max_path || path[0] != own_id ||
-        relay_is_blocked(path[1]))
-    {
-        return;
-    }
-    for (size_t i = 1; i < length; ++i)
-    {
-        if (!valid_peer(path[i]))
-        {
-            return;
-        }
-    }
-    const uint8_t target = path[length - 1];
-    relay_route &route = routed_routes[target];
-    const bool take = own_answer || !route.valid ||
-        length < route.path_length ||
-        now - route.learned_ms >= app_config::relay_route_refresh_ms;
-    if (!take)
-    {
-        return;
-    }
-    const bool changed = !route.valid || route.path_length != length ||
-        memcmp(route.path, path, length) != 0;
-    route.valid = true;
-    route.next_hop = path[1];
-    route.path_length = static_cast<uint8_t>(length);
-    memcpy(route.path, path, length);
-    route.learned_ms = now;
-    route.refreshed_ms = now;
-    if (changed)
-    {
-        char text[40];
-        path_text(path, length, text, sizeof(text));
-        Serial.printf("ROUTED route to %u (%s): %s\n", target,
-            device_name(target), text);
-    }
-}
-
-void routed_send(const relay_frame::route_message &message,
-    const uint8_t *mac)
-{
-    if (routed_net.muted)
-    {
-        ++relay_muted_tx;
-        return;
-    }
-    uint8_t out[relay_frame::route_fixed_size + relay_frame::max_path +
-        relay_frame::route_tag_size];
-    size_t size = 0;
-    if (!relay_frame::build_route(e2e_keys::network, message, out,
-            sizeof(out), &size) ||
-        radio::send(mac, out, size) != ESP_OK)
-    {
-        ++routed_net.send_errors;
-    }
-}
-
-const uint8_t *routed_mac(uint8_t board)
-{
-    const network_config::device *entry = radio::find_device(board);
-    return entry ? entry->mac : nullptr;
-}
-
-// Floods a route request for `target`.
-void routed_ask(uint8_t target, uint32_t now)
-{
-    relay_route &route = routed_routes[target];
-    ++route.tries;
-    route.asked_ms = now;
-    route.refreshed_ms = now;
-    relay_frame::route_message request = {};
-    request.kind = relay_frame::route_request;
-    request.origin = own_id;
-    request.target = target;
-    request.request_id = ++routed_request_id;
-    request.ttl = app_config::relay_max_hops;
-    request.path_length = 1;
-    request.path[0] = own_id;
-    // Its echoes from the neighbours are copies.
-    routed_requests.first(own_id, request.request_id, now,
-        app_config::relay_seen_window_ms);
-    ++routed_net.requests;
-    routed_send(request, radio::broadcast_mac);
-}
-
-// This board needs a route to `target`: asks now, unless a request is out
-// already (service_routed retries it) or nobody answered a moment ago.
-void routed_discover(uint8_t target, uint32_t now)
-{
-    relay_route &route = routed_routes[target];
-    if (route.searching ||
-        (route.tries >= app_config::relay_request_tries &&
-            now - route.asked_ms < app_config::relay_request_backoff_ms))
-    {
-        return;
-    }
-    route.searching = true;
-    route.tries = 0;
-    Serial.printf("ROUTED looking for a route to %u (%s)\n", target,
-        device_name(target));
-    routed_ask(target, now);
-}
-
-// A frame from `origin` for `target` can't go on from here: tell `origin`
-// so it looks for another route.
-void routed_report(uint8_t origin, uint8_t target, uint32_t now)
-{
-    if (origin == own_id)
-    {
-        routed_discover(target, now);
-        return;
-    }
-    if (now - routed_error_ms[target] < app_config::relay_error_gap_ms)
-    {
-        return;
-    }
-    routed_error_ms[target] = now;
-    const relay_route *back = routed_route(origin, now);
-    const uint8_t *mac = back ? routed_mac(back->next_hop) : nullptr;
-    if (!mac)
-    {
-        return;  // No way to tell it; its own timeouts notice.
-    }
-    relay_frame::route_message error = {};
-    error.kind = relay_frame::route_error;
-    error.origin = origin;
-    error.target = target;
-    error.ttl = 1;
-    error.path_length = 1;
-    error.path[0] = own_id;
-    routed_send(error, mac);
-    Serial.printf("ROUTED no route to %u for a frame from %u: route error "
-                  "sent\n",
-        target, origin);
-}
-
-void routed_on_request(relay_frame::route_message request, uint8_t sender,
-    uint32_t now)
-{
-    if (request.origin == own_id || !valid_peer(request.origin) ||
-        request.path[0] != request.origin ||
-        request.path[request.path_length - 1] != sender)
-    {
-        return;
-    }
-    for (size_t i = 0; i < request.path_length; ++i)
-    {
-        if (request.path[i] == own_id)
-        {
-            return;  // It looped back.
-        }
-    }
-    if (!routed_requests.first(request.origin, request.request_id, now,
-            app_config::relay_seen_window_ms) ||
-        request.path_length >= relay_frame::max_path)
-    {
-        return;
-    }
-    // The way back to the asker: this board, then the request's path
-    // backwards.
-    uint8_t back[relay_frame::max_path];
-    size_t length = 0;
-    back[length++] = own_id;
-    for (size_t i = request.path_length; i-- > 0;)
-    {
-        back[length++] = request.path[i];
-    }
-    routed_learn(back, length, now, false);
-    if (request.target == own_id)
-    {
-        // Answer back along the request's path, with the whole route.
-        relay_frame::route_message reply = request;
-        reply.kind = relay_frame::route_reply;
-        reply.path[reply.path_length++] = own_id;
-        const uint8_t *mac = routed_mac(sender);
-        if (mac)
-        {
-            routed_send(reply, mac);
-        }
-        char text[40];
-        path_text(reply.path, reply.path_length, text, sizeof(text));
-        Serial.printf("ROUTED route request from %u answered: %s\n",
-            request.origin, text);
-        return;
-    }
-    if (request.ttl <= 1)
-    {
-        return;
-    }
-    --request.ttl;
-    request.path[request.path_length++] = own_id;
-    routed_send(request, radio::broadcast_mac);
-}
-
-void routed_on_reply(const relay_frame::route_message &reply, uint8_t sender,
-    uint32_t now)
-{
-    const size_t length = reply.path_length;
-    size_t at = length;
-    for (size_t i = 0; i < length; ++i)
-    {
-        if (reply.path[i] == own_id)
-        {
-            at = i;
-            break;
-        }
-    }
-    if (at + 1 >= length || reply.path[at + 1] != sender ||
-        reply.path[0] != reply.origin ||
-        reply.path[length - 1] != reply.target)
-    {
-        return;
-    }
-    // Routes to every board on the path, both ways from this one.
-    uint8_t way[relay_frame::max_path];
-    for (size_t j = at + 1; j < length; ++j)
-    {
-        size_t n = 0;
-        for (size_t k = at; k <= j; ++k)
-        {
-            way[n++] = reply.path[k];
-        }
-        routed_learn(way, n, now, at == 0 && j == length - 1);
-    }
-    for (size_t j = 0; j < at; ++j)
-    {
-        size_t n = 0;
-        for (size_t k = at + 1; k-- > j;)
-        {
-            way[n++] = reply.path[k];
-        }
-        routed_learn(way, n, now, false);
-    }
-    if (at == 0)
-    {
-        relay_route &route = routed_routes[reply.target];
-        route.searching = false;
-        route.tries = 0;
-        return;
-    }
-    const uint8_t *mac = routed_mac(reply.path[at - 1]);
-    if (mac)
-    {
-        routed_send(reply, mac);
-    }
-}
-
-void routed_on_error(const relay_frame::route_message &error, uint8_t sender,
-    uint32_t now)
-{
-    if (!valid_peer(error.target) && error.target != own_id)
-    {
-        return;
-    }
-    relay_route &route = routed_routes[error.target];
-    if (route.valid && route.next_hop == sender)
-    {
-        route.valid = false;
-        Serial.printf("ROUTED route to %u broken beyond Board %u: dropped\n",
-            error.target, sender);
-    }
-    if (error.origin == own_id)
-    {
-        routed_discover(error.target, now);
-        return;
-    }
-    const relay_route *back = routed_route(error.origin, now);
-    const uint8_t *mac = back ? routed_mac(back->next_hop) : nullptr;
-    if (mac)
-    {
-        routed_send(error, mac);
-    }
-}
-
-void routed_control(const radio::received_frame &frame, uint32_t now)
-{
-    const uint8_t sender = relay_board_of(frame.mac);
-    if (relay_is_blocked(sender))
-    {
-        ++routed_net.blocked;
-        return;
-    }
-    if (routed_net.muted)
-    {
-        ++relay_muted_rx;
-        return;
-    }
-    relay_frame::route_message message = {};
-    if (!relay_frame::parse_route(e2e_keys::network, frame.bytes, frame.size,
-            &message))
-    {
-        relay_reject(routed_net, frame, "bad route message");
-        return;
-    }
-    switch (message.kind)
-    {
-    case relay_frame::route_request:
-        routed_on_request(message, sender, now);
-        break;
-    case relay_frame::route_reply:
-        routed_on_reply(message, sender, now);
-        break;
-    case relay_frame::route_error:
-        routed_on_error(message, sender, now);
-        break;
-    }
-}
-
-// Retries requests, refreshes routes in use, and drops routes whose first
-// hop stopped acknowledging (the radio's ESP-NOW acknowledgements, as for
-// direct ESP-NOW links).
-void service_routed(uint32_t now)
-{
-    for (uint8_t target = 1; target <= max_id; ++target)
-    {
-        if (!valid_peer(target))
-        {
-            continue;
-        }
-        relay_route &route = routed_routes[target];
-        if (route.valid && acks_lost(route.next_hop, now))
-        {
-            routed_drop_via(route.next_hop, "first hop not acknowledging");
-        }
-        if (route.searching &&
-            now - route.asked_ms >= app_config::relay_request_retry_ms)
-        {
-            if (route.tries < app_config::relay_request_tries)
-            {
-                routed_ask(target, now);
-            }
-            else
-            {
-                route.searching = false;
-                Serial.printf("ROUTED no answer from %u (%s) after %u "
-                              "requests; asking again in %lu s if needed\n",
-                    target, device_name(target), route.tries,
-                    static_cast<unsigned long>(
-                        app_config::relay_request_backoff_ms / 1000));
-            }
-        }
-        // In use and due: look again, keeping this route meanwhile.
-        if (route.valid && !route.searching &&
-            routed_net.peers[target].link.established() &&
-            now - route.refreshed_ms >= app_config::relay_route_refresh_ms)
-        {
-            route.tries = 0;
-            routed_ask(target, now);
-        }
-    }
 }
 
 // Sending
@@ -556,12 +111,10 @@ esp_err_t relay_transmit(relay_net &net, const uint8_t *mac,
     return result;
 }
 
-// Sends a secure_message frame from this board toward `destination`: the
-// flood mesh broadcasts it; the routed relay hands it to the route's first
-// hop, or looks for a route (the frame is dropped; resends and the next
-// frames go once it is found).
-esp_err_t relay_send_inner(relay_net &net, uint8_t destination,
-    const uint8_t *inner, size_t inner_size, uint32_t now)
+// Broadcasts a secure_message frame from this board: every board that
+// hears it passes it on, and the one it is addressed to takes it.
+esp_err_t relay_send_inner(relay_net &net, const uint8_t *inner,
+    size_t inner_size)
 {
     if (net.muted)
     {
@@ -569,42 +122,31 @@ esp_err_t relay_send_inner(relay_net &net, uint8_t destination,
         return ESP_OK;  // Gone, as out of range: timeouts notice.
     }
     relay_frame::envelope head = {};
-    head.marker = net.marker;
+    head.marker = relay_frame::marker_flood;
     head.ttl = app_config::relay_max_hops;
     head.id = ++net.next_id;
     head.path_length = 1;
     head.path[0] = own_id;
-    const uint8_t *mac = radio::broadcast_mac;
-    if (net.link == via::routed)
-    {
-        const relay_route *route = routed_route(destination, now);
-        mac = route ? routed_mac(route->next_hop) : nullptr;
-        if (!mac)
-        {
-            ++net.no_route;
-            routed_discover(destination, now);
-            return ESP_ERR_NOT_FOUND;
-        }
-    }
-    return relay_transmit(net, mac, head, inner, inner_size, false);
+    return relay_transmit(net, radio::broadcast_mac, head, inner, inner_size,
+        false);
 }
 
-esp_err_t relay_send_payload(via link, uint8_t peer, const uint8_t *payload,
+esp_err_t relay_send_payload(uint8_t peer, const uint8_t *payload,
     size_t size, uint8_t type)
 {
-    relay_net &net = relay_of(link);
+    relay_net &net = flood_net;
     uint8_t inner[relay_frame::max_inner_size] = {};
     size_t inner_size = 0;
-    if (!seal_payload(net.peers[peer].link, way(link).tag, type, payload,
+    if (!seal_payload(net.peers[peer].link, way(net.link).tag, type, payload,
             size, inner, sizeof(inner), &inner_size))
     {
         return ESP_FAIL;
     }
-    return relay_send_inner(net, peer, inner, inner_size, millis());
+    return relay_send_inner(net, inner, inner_size);
 }
 
 void relay_send_control(relay_net &net, uint8_t destination,
-    const control_frame::message &content, uint32_t now)
+    const control_frame::message &content)
 {
     uint8_t inner[relay_frame::max_inner_size];
     size_t size = 0;
@@ -617,13 +159,12 @@ void relay_send_control(relay_net &net, uint8_t destination,
             secure_message::status_name(built));
         return;
     }
-    relay_send_inner(net, destination, inner, size, now);
+    relay_send_inner(net, inner, size);
 }
 
 // Receive
 
-// A relayed frame addressed to this board, as handle_mesh() takes the
-// mesh's.
+// A relayed frame addressed to this board.
 void relay_deliver(relay_net &net, const radio::received_frame &frame,
     const relay_frame::envelope &head, secure_message::header fields,
     uint32_t now)
@@ -746,14 +287,12 @@ void service_relay_queue(uint32_t now)
     }
 }
 
-// Passes a frame for another board on: the flood mesh broadcasts it again
-// after a random wait, the routed relay hands it to the next hop toward
-// its destination. A connected board (over any radio) passes nothing on:
-// its radio time is for that connection. One only asking or asked still
-// relays (any_connected()). Frames addressed to it are always taken
+// Passes a frame for another board on: broadcasts it again after a random
+// wait. A connected board (over any radio) passes nothing on: its radio
+// time is for that connection. One only asking or asked still relays
+// (any_connected()). Frames addressed to it are always taken
 // (relay_deliver()).
-void relay_forward(relay_net &net, relay_frame::envelope head,
-    const secure_message::header &fields, uint32_t now)
+void relay_forward(relay_net &net, relay_frame::envelope head, uint32_t now)
 {
     if (any_connected())
     {
@@ -765,42 +304,23 @@ void relay_forward(relay_net &net, relay_frame::envelope head,
         ++net.hop_drops;
         return;
     }
-    const uint8_t *mac = radio::broadcast_mac;
-    if (net.link == via::routed)
-    {
-        const relay_route *route = routed_route(fields.destination, now);
-        mac = route ? routed_mac(route->next_hop) : nullptr;
-        if (!mac)
-        {
-            ++net.no_route;
-            routed_report(fields.source, fields.destination, now);
-            return;
-        }
-    }
-    else if (relay_hold(head, now))
+    if (relay_hold(head, now))
     {
         return;  // service_relay_queue() sends it.
     }
-    relay_transmit(net, mac, head, head.inner, head.inner_size, true);
+    relay_transmit(net, radio::broadcast_mac, head, head.inner,
+        head.inner_size, true);
 }
 
-// A flood or routed frame (true; taken here), else false: handle() takes
-// it as a direct ESP-NOW frame.
+// A flood frame (true; taken here), else false: handle() takes it as a
+// direct ESP-NOW frame.
 bool relay_handle(const radio::received_frame &frame, uint32_t now)
 {
-    const uint8_t marker = frame.size > 0 ? frame.bytes[0] : 0;
-    if (marker == relay_frame::marker_route)
-    {
-        routed_control(frame, now);
-        return true;
-    }
-    relay_net *found = marker == relay_frame::marker_flood ? &flood_net :
-        marker == relay_frame::marker_routed ? &routed_net : nullptr;
-    if (!found)
+    if (frame.size == 0 || frame.bytes[0] != relay_frame::marker_flood)
     {
         return false;
     }
-    relay_net &net = *found;
+    relay_net &net = flood_net;
     const uint8_t sender = relay_board_of(frame.mac);
     if (relay_is_blocked(sender))
     {
@@ -872,42 +392,64 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
     }
     else
     {
-        relay_forward(net, head, fields, now);
+        relay_forward(net, head, now);
     }
     return true;
 }
 
 // Routes on screen
 
-// The path a connection to `peer` takes, this board first: the route this
-// board sends along (routed relay), or the path the last frame from the
-// peer took, turned round (flood mesh: every path is used; this is the one
-// whose copy arrived first).
-void relay_route_text(via link, uint8_t peer, uint32_t now, char *text,
+// A path of board IDs, this board first: "1 > 3 > 2, via Board 3",
+// "1 > 2, direct", or "finding..." while not known (shorter than 2).
+void path_text(const uint8_t *path, size_t length, char *text,
+    size_t capacity)
+{
+    if (length < 2)
+    {
+        snprintf(text, capacity, "finding...");
+        return;
+    }
+    size_t used = 0;
+    for (size_t i = 0; i < length && used < capacity; ++i)
+    {
+        used += snprintf(text + used, capacity - used, "%s%u",
+            i == 0 ? "" : " > ", path[i]);
+    }
+    if (used >= capacity)
+    {
+        return;
+    }
+    if (length == 2)
+    {
+        snprintf(text + used, capacity - used, ", direct");
+    }
+    else if (length == 3)
+    {
+        snprintf(text + used, capacity - used, ", via Board %u", path[1]);
+    }
+    else
+    {
+        snprintf(text + used, capacity - used, ", via %u boards",
+            static_cast<unsigned>(length - 2));
+    }
+}
+
+// The path a connection to `peer` takes, this board first: the path the
+// last frame from the peer took, turned round (every path is used; this is
+// the one whose copy arrived first).
+void relay_route_text(uint8_t peer, uint32_t now, char *text,
     size_t capacity)
 {
     uint8_t path[relay_frame::max_path + 1];
     size_t length = 0;
-    if (link == via::routed)
+    const relay_peer &state = flood_net.peers[peer];
+    if (state.heard_length > 0 &&
+        now - state.heard_ms < app_config::presence_timeout_ms)
     {
-        const relay_route *route = routed_route(peer, now);
-        if (route)
+        path[length++] = own_id;
+        for (size_t i = state.heard_length; i-- > 0;)
         {
-            length = route->path_length;
-            memcpy(path, route->path, length);
-        }
-    }
-    else
-    {
-        const relay_peer &state = flood_net.peers[peer];
-        if (state.heard_length > 0 &&
-            now - state.heard_ms < app_config::presence_timeout_ms)
-        {
-            path[length++] = own_id;
-            for (size_t i = state.heard_length; i-- > 0;)
-            {
-                path[length++] = state.heard_path[i];
-            }
+            path[length++] = state.heard_path[i];
         }
     }
     path_text(path, length, text, capacity);
@@ -917,64 +459,27 @@ void relay_route_text(via link, uint8_t peer, uint32_t now, char *text,
 
 peer_state &peer_via(via link, uint8_t peer)
 {
-    switch (link)
-    {
-    case via::mesh: return mesh_peers[peer];
-    case via::flood:
-    case via::routed: return relay_of(link).peers[peer];
-    case via::espnow: break;
-    }
-    return peers[peer];
+    return link == via::flood ? flood_net.peers[peer] : peers[peer];
 }
 
 void send_control_via(via link, uint8_t destination,
-    const control_frame::message &content, uint32_t now)
+    const control_frame::message &content)
 {
-    switch (link)
+    if (link == via::flood)
     {
-    case via::mesh:
-        mesh_send_control(destination, content);
+        relay_send_control(flood_net, destination, content);
         return;
-    case via::flood:
-    case via::routed:
-        relay_send_control(relay_of(link), destination, content, now);
-        return;
-    case via::espnow: break;
     }
     send_control(control_frame::type_session, destination,
         radio::find_device(destination)->mac, content);
-}
-
-void route_text_via(via link, uint8_t peer, uint32_t now, char *text,
-    size_t capacity)
-{
-    if (link == via::mesh)
-    {
-        mesh_route_text(peer, now, text, capacity);
-    }
-    else
-    {
-        relay_route_text(link, peer, now, text, capacity);
-    }
 }
 
 // Why `peer` looks gone over `link` (it didn't reboot): for the log line
 // that ends the connection.
 const char *gone_reason(via link, uint8_t peer, uint32_t now)
 {
-    switch (link)
-    {
-    case via::espnow:
-        return acks_lost(peer, now) ? "stopped acknowledging (radio)" :
-            "went offline";
-    case via::mesh:
-        return !mesh_ready() ? "can't be reached: this board left the mesh" :
-            mesh_sends_failing(peer, now) ? "can't be reached (sends failing)" :
-            "went offline";
-    case via::flood:
-    case via::routed: break;
-    }
-    return "went offline";
+    return link == via::espnow && acks_lost(peer, now) ?
+        "stopped acknowledging (radio)" : "went offline";
 }
 
 // Connections
@@ -993,7 +498,7 @@ bool place_relay_call(relay_net &net, uint8_t peer, uint32_t now)
             net.tag);
         return false;
     }
-    if (!relay_peer_online(net.link, peer, now))
+    if (!relay_peer_online(peer, now))
     {
         Serial.printf("%s LINK refused: %u is offline (%s)\n", net.tag, peer,
             net.peers[peer].link.established() ?
@@ -1028,42 +533,15 @@ void print_relay(relay_net &net)
         static_cast<unsigned long>(net.hop_drops),
         static_cast<unsigned long>(net.busy_drops),
         static_cast<unsigned long>(net.send_errors));
-    if (net.link == via::routed)
-    {
-        Serial.printf(" no route %lu requests %lu",
-            static_cast<unsigned long>(net.no_route),
-            static_cast<unsigned long>(net.requests));
-    }
     Serial.printf("%s | sessions", net.muted ? " | MUTED" : "");
-    print_sessions(net.link, now);
+    print_flood_sessions(now);
     Serial.println();
 }
 
-void print_routes()
+// The boards whose relayed frames this board ignores (`relay block`).
+void print_blocked()
 {
-    const uint32_t now = millis();
-    Serial.print("ROUTES |");
-    for (uint8_t target = 1; target <= max_id; ++target)
-    {
-        if (!valid_peer(target))
-        {
-            continue;
-        }
-        const relay_route &route = routed_routes[target];
-        if (route.valid)
-        {
-            char text[40];
-            path_text(route.path, route.path_length, text, sizeof(text));
-            Serial.printf(" to %u: %s, %lu s old |", target, text,
-                static_cast<unsigned long>((now - route.learned_ms) / 1000));
-        }
-        else
-        {
-            Serial.printf(" to %u: %s |", target,
-                route.searching ? "looking" : "none");
-        }
-    }
-    Serial.printf(" blocked:");
+    Serial.print("RELAY blocked:");
     bool any = false;
     for (uint8_t id = 1; id <= max_id; ++id)
     {
@@ -1085,36 +563,27 @@ void setup_relay_keys()
         {
             flood_net.peers[entry.peer].link.begin(own_id, entry.peer,
                 entry.key, session::transport::flood);
-            routed_net.peers[entry.peer].link.begin(own_id, entry.peer,
-                entry.key, session::transport::routed);
         }
     }
 }
 
 void setup_relay()
 {
-    for (relay_net *net : relay_nets)
-    {
-        net->calls.begin(own_id);  // ESP-NOW's timings.
-        net->calls.seed(esp_random());
-        net->next_id = static_cast<uint16_t>(esp_random());
-    }
-    routed_net.muted = true;
+    flood_net.calls.begin(own_id);  // ESP-NOW's timings.
+    flood_net.calls.seed(esp_random());
+    flood_net.next_id = static_cast<uint16_t>(esp_random());
     Serial.printf("RELAY ESP-NOW multi-hop: flood mesh | up to %u hops | "
                   "relays wait up to %lu ms | voice pairs %s | no router, no "
-                  "root | routed relay off in this build\n",
+                  "root\n",
         app_config::relay_max_hops,
         static_cast<unsigned long>(app_config::relay_jitter_ms),
         flood_pair ? "on" : "off");
     const uint32_t now = millis();
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
-        for (relay_net *net : relay_nets)
+        if (flood_net.peers[peer].link.paired())
         {
-            if (net->peers[peer].link.paired())
-            {
-                start_session(net->link, peer, now);
-            }
+            start_session(via::flood, peer, now);
         }
     }
 }
@@ -1122,19 +591,14 @@ void setup_relay()
 void service_relay(uint32_t now)
 {
     service_relay_queue(now);
-    for (relay_net *net : relay_nets)
-    {
-        service_sessions(net->link, now, false);
-        service_presence(net->link, now, true, false, presence_ping,
-            sizeof(presence_ping));
-        service_calls(net->link, now);
-    }
+    service_sessions(via::flood, now, false);
+    service_presence(via::flood, now);
+    service_calls(via::flood, now);
 }
 
 // Test settings, from the Tools page (ui.inc) or serial.
 
-// Ignores (or takes again) flood and routed frames heard directly from
-// `board`, as if it were out of range: set on both boards, frames between
+// Ignores (or takes again) flood frames heard directly from `board`, as if it were out of range: set on both boards, frames between
 // them must go through a third.
 void relay_set_block(uint8_t board, bool on)
 {
@@ -1145,14 +609,13 @@ void relay_set_block(uint8_t board, bool on)
     if (on)
     {
         relay_blocked |= 1u << board;
-        routed_drop_via(board, "blocked");
     }
     else
     {
         relay_blocked &= ~(1u << board);
     }
-    Serial.printf("RELAY %s Board %u: flood and routed frames heard directly "
-                  "from it are %s\n",
+    Serial.printf("RELAY %s Board %u: flood frames heard directly from it "
+                  "are %s\n",
         on ? "blocking" : "unblocking", board,
         on ? "ignored (as if out of range)" : "taken again");
 }
@@ -1179,21 +642,15 @@ void flood_set_pair(bool on)
         on && !redundancy ? " | no effect while redundancy is off" : "");
 }
 
-// Serial commands. accept, decline and disconnect act on the flood or
-// routed connection while one is in progress; hello, talk, test and stop
-// follow it on their own (voice_via()).
+// Serial commands. accept, decline and disconnect act on the flood
+// connection while one is in progress; hello, talk, test and stop follow
+// it on their own (voice_via()).
 bool run_relay_command(const char *line, uint32_t now)
 {
-    for (relay_net *each : relay_nets)
+    relay_net &net = flood_net;
+    if (strncmp(line, "flood", 5) == 0)
     {
-        relay_net &net = *each;
-        const char *name = way(net.link).name;  // "flood", "routed"
-        const size_t name_size = strlen(name);
-        if (strncmp(line, name, name_size) != 0)
-        {
-            continue;
-        }
-        const char *rest = line + name_size;
+        const char *rest = line + 5;
         if (*rest == '\0')
         {
             print_relay(net);
@@ -1204,8 +661,7 @@ bool run_relay_command(const char *line, uint32_t now)
             relay_set_muted(net, strcmp(rest, " mute on") == 0);
             return true;
         }
-        if (net.link == via::flood &&
-            (strcmp(rest, " pair on") == 0 || strcmp(rest, " pair off") == 0))
+        if (strcmp(rest, " pair on") == 0 || strcmp(rest, " pair off") == 0)
         {
             flood_set_pair(strcmp(rest, " pair on") == 0);
             return true;
@@ -1227,7 +683,7 @@ bool run_relay_command(const char *line, uint32_t now)
     }
     if (strcmp(line, "relay block") == 0)
     {
-        print_routes();
+        print_blocked();
         return true;
     }
     const bool block = strncmp(line, "relay block ", 12) == 0;
@@ -1245,13 +701,6 @@ bool run_relay_command(const char *line, uint32_t now)
         relay_set_block(board, block);
         return true;
     }
-    for (relay_net *net : relay_nets)
-    {
-        if (net->calls.current() != call::state::idle &&
-            run_link_command(net->calls, way(net->link).tag, line, now))
-        {
-            return true;
-        }
-    }
-    return false;
+    return net.calls.current() != call::state::idle &&
+        run_link_command(net.calls, way(net.link).tag, line, now);
 }

@@ -50,7 +50,6 @@ void tone(uint32_t hz, uint32_t ms);
 void sweep(uint32_t from_hz, uint32_t to_hz, uint32_t ms);
 bool testing();
 
-float level_rms();  // Latest frame, 16-bit scale, before volume.
 counters stats();
 // Duty updates per second the timer interrupt actually made; 0 before the
 // first second.

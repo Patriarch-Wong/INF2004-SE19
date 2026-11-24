@@ -99,7 +99,7 @@ def test_busy():
         return
     since = B1.mark()
     B1.send("connect 2")
-    check(bool(B1.wait(r"^LINK refused: a flood mesh or routed relay", 3,
+    check(bool(B1.wait(r"^LINK refused: a flood mesh connection", 3,
                        since)), "direct ESP-NOW connect refused")
     since = B1.mark()
     B1.send("lora connect 2")

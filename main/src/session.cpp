@@ -17,24 +17,6 @@ static_assert(nonce_size >= control_frame::min_body_size,
     "hello is long enough");
 }
 
-const char *event_name(event value)
-{
-    switch (value)
-    {
-    case event::ignored:
-        return "ignored";
-    case event::bad_tag:
-        return "bad handshake tag";
-    case event::replied:
-        return "replied";
-    case event::established:
-        return "established";
-    case event::confirmed:
-        return "confirmed";
-    }
-    return "unknown";
-}
-
 const char *open_result_name(open_result value)
 {
     switch (value)

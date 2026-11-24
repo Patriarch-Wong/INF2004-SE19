@@ -170,7 +170,6 @@ struct level
     float peak;
 };
 
-level measure(const float *samples, size_t count);
 level measure(const int16_t *samples, size_t count);
 
 // Fades a frame from gain `from` to gain `to`, linearly.

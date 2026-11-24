@@ -35,15 +35,13 @@ enum class tx_phase : uint8_t
 };
 
 // The Wi-Fi transport a connection, and so its voice and text, runs over:
-// ESP-NOW directly, ESP-MESH (mesh.inc), or ESP-NOW relayed by every board
-// (relay.inc: flood mesh, routed relay). There is one microphone, codec
-// and speaker, so each stream remembers its own.
+// ESP-NOW directly, or ESP-NOW relayed by every board (relay.inc: the flood
+// mesh). There is one microphone, codec and speaker, so each stream
+// remembers its own.
 enum class via : uint8_t
 {
     espnow,
-    mesh,
     flood,
-    routed,
     // ESP-NOW broadcast (broadcast.inc): one frame to every board in range,
     // no connection. Not a way to connect; voice and text only.
     broadcast,
@@ -78,10 +76,9 @@ uint32_t tx_started_ms = 0;
 uint32_t tx_drain_until_ms = 0;
 uint32_t tx_last_end_ms = 0;
 voice_link::history sent;
-// Over ESP-MESH only every other frame is sent, carrying the one before
-// it (redundancy): through the root the mesh carries about 30 packets a
-// second, not voice's 50 (2026-11-06). The flood mesh does the same while
-// flood_pair is on, to halve its airtime. The frame waiting for its partner.
+// While flood_pair is on, the flood mesh sends only every other frame,
+// carrying the one before it (redundancy), to halve its airtime. The frame
+// waiting for its partner.
 bool tx_held = false;
 uint32_t tx_held_sequence = 0;
 constexpr unsigned retransmit_capacity = 64;
@@ -154,16 +151,12 @@ bool text_sent_once = false;
 uint32_t text_sent_ms = 0;
 uint32_t text_not_connected = 0;  // Dropped: not from the connected board.
 
-// Connections: calls over ESP-NOW, mesh_calls over ESP-MESH (mesh.inc),
-// flood_calls and routed_calls over the ESP-NOW multi-hop ways (relay.inc),
-// lora_calls over LoRa (lora.inc).
+// Connections: calls over ESP-NOW, flood_calls over the flood mesh
+// (relay.inc), lora_calls over LoRa (lora.inc).
 call::machine calls;
-call::machine mesh_calls;
 call::machine flood_calls;
-call::machine routed_calls;
 call::machine lora_calls;
-call::machine *const connections[] = {&calls, &mesh_calls, &flood_calls,
-    &routed_calls, &lora_calls};
+call::machine *const connections[] = {&calls, &flood_calls, &lora_calls};
 constexpr size_t connection_count =
     sizeof(connections) / sizeof(connections[0]);
 // A broadcast has no connection: this one is never dialled, so it stays
@@ -184,7 +177,7 @@ struct connection_log
     char route[40] = {};  // The route last logged.
     uint32_t route_checked_ms = 0;
 };
-connection_log connection_logs[5];  // Broadcast's stays unused.
+connection_log connection_logs[3];  // Broadcast's stays unused.
 
 // Microphone recording for `micdump`.
 int16_t *dump_buffer = nullptr;
@@ -212,33 +205,20 @@ bool lora_in_use()
     return lora_calls.current() != call::state::idle;
 }
 
-// The same for ESP-MESH, and its sending side (mesh.inc).
-bool mesh_in_use()
-{
-    return mesh_calls.current() != call::state::idle;
-}
-bool mesh_peer_online(uint8_t peer, uint32_t now);
-esp_err_t mesh_send_payload(uint8_t peer, const uint8_t *payload,
+// The flood mesh's sending side, and the path a connection to `peer` takes
+// over it ("finding..." while not known) (relay.inc).
+bool relay_peer_online(uint8_t peer, uint32_t now);
+esp_err_t relay_send_payload(uint8_t peer, const uint8_t *payload,
     size_t size, uint8_t type);
-// The board chosen as mesh root, told over ESP-NOW (true if `payload` was
-// it).
-bool take_mesh_choice(uint8_t source, const uint8_t *payload, size_t size);
-
-// The flood mesh and routed relay's sending side (relay.inc); `link` is
-// via::flood or via::routed.
-bool relay_peer_online(via link, uint8_t peer, uint32_t now);
-esp_err_t relay_send_payload(via link, uint8_t peer, const uint8_t *payload,
-    size_t size, uint8_t type);
+void relay_route_text(uint8_t peer, uint32_t now, char *text,
+    size_t capacity);
 
 // Each Wi-Fi way's session and presence state for `peer`, how it sends a
-// session control frame, the route to `peer` ("finding..." while not
-// known; not for ESP-NOW), and why `peer` looks gone (relay.inc, which
-// comes after every way).
+// session control frame, and why `peer` looks gone (relay.inc, which comes
+// after every way).
 peer_state &peer_via(via link, uint8_t peer);
 void send_control_via(via link, uint8_t destination,
-    const control_frame::message &content, uint32_t now);
-void route_text_via(via link, uint8_t peer, uint32_t now, char *text,
-    size_t capacity);
+    const control_frame::message &content);
 const char *gone_reason(via link, uint8_t peer, uint32_t now);
 
 // Broadcasts (broadcast.inc, after lora.inc): sealing and sending one to
@@ -299,7 +279,7 @@ uint32_t random_id()
 }
 
 // Asks `peer` on `machine` under connection ID `id`; false, logged with
-// `prefix` ("MESH "), if `machine` is already busy.
+// `prefix` ("FLOOD "), if `machine` is already busy.
 bool dial(call::machine &machine, const char *prefix, uint8_t peer,
     uint32_t id, uint32_t now)
 {
@@ -326,7 +306,7 @@ void ring_while_asked(const call::machine &machine, uint32_t now)
 }
 
 // Serial accept, decline and disconnect for `machine`; false if `line` is
-// none of them. `prefix` starts the log line ("MESH ").
+// none of them. `prefix` starts the log line ("FLOOD ").
 bool run_link_command(call::machine &machine, const char *prefix,
     const char *line, uint32_t now)
 {
@@ -369,10 +349,6 @@ static_assert(kind_presence > voice_link::kind_end &&
         kind_presence != call::kind_call,
     "presence kind clashes with another payload kind");
 const uint8_t presence_ping[] = {kind_presence};
-// Over an ESP-NOW pair session: the board chosen as mesh root (mesh.inc).
-constexpr uint8_t kind_mesh_root = 8;
-static_assert(kind_mesh_root > kind_presence + 2,
-    "mesh root kind clashes with another payload kind");
 // Over a pair session, this board's broadcast key, and the receipt for one
 // (broadcast.inc).
 constexpr uint8_t kind_broadcast_key = 6;
@@ -417,7 +393,7 @@ bool peer_online(uint8_t peer, uint32_t now)
 }
 
 // Seals `payload` under `link` into `frame`; false, logged with `prefix`
-// ("MESH "), if it can't. Every transport's sending goes through here.
+// ("FLOOD "), if it can't. Every transport's sending goes through here.
 bool seal_payload(session::link &link, const char *prefix, uint8_t type,
     const uint8_t *payload, size_t size, uint8_t *frame, size_t capacity,
     size_t *frame_size)
@@ -453,20 +429,16 @@ struct way_info
 {
     call::machine &calls;
     const char *name;     // via= in the TX_START and RX_START lines.
-    const char *tag;      // Starts its log lines: "MESH LINK ...".
+    const char *tag;      // Starts its log lines: "FLOOD LINK ...".
     const char *request;  // Ends "LINK request | ... wants to connect".
     const char *label;    // On screen.
-    const char *over;     // On screen: "over ESP-MESH".
+    const char *over;     // On screen: "over ESP-NOW flood".
     const char *title;    // Connected screen, at most 15 characters.
 };
 const way_info ways[] = {
     {calls, "espnow", "", "", "ESP-NOW", "over ESP-NOW", "Connected"},
-    {mesh_calls, "mesh", "MESH ", " over ESP-MESH", "ESP-MESH",
-        "over ESP-MESH", "Mesh connected"},
     {flood_calls, "flood", "FLOOD ", " over the flood mesh",
         "ESP-NOW flood", "over ESP-NOW flood", "Flood connected"},
-    {routed_calls, "routed", "ROUTED ", " over the routed relay",
-        "Routed relay", "over routed relay", "Relay connected"},
     {no_connection, "broadcast", "BCAST ", "", "Broadcast", "to all boards",
         "Broadcast"},
 };
@@ -487,14 +459,8 @@ connection_log &log_of(via link)
 // Voice and text follow the Wi-Fi connection in progress (one at a time).
 via voice_via()
 {
-    for (via link : {via::mesh, via::flood, via::routed})
-    {
-        if (way(link).calls.current() != call::state::idle)
-        {
-            return link;
-        }
-    }
-    return via::espnow;
+    return flood_calls.current() != call::state::idle ? via::flood :
+        via::espnow;
 }
 
 // A broadcast needs no session: it goes to whoever has this board's key.
@@ -507,9 +473,7 @@ bool online_via(via link, uint8_t peer, uint32_t now)
 {
     switch (link)
     {
-    case via::mesh: return mesh_peer_online(peer, now);
-    case via::flood:
-    case via::routed: return relay_peer_online(link, peer, now);
+    case via::flood: return relay_peer_online(peer, now);
     case via::broadcast: return true;
     case via::espnow: break;
     }
@@ -522,10 +486,7 @@ esp_err_t send_via(via link, uint8_t peer, const uint8_t *payload,
 {
     switch (link)
     {
-    case via::mesh: return mesh_send_payload(peer, payload, size, type);
-    case via::flood:
-    case via::routed:
-        return relay_send_payload(link, peer, payload, size, type);
+    case via::flood: return relay_send_payload(peer, payload, size, type);
     case via::broadcast: return broadcast_send(payload, size, type);
     case via::espnow: break;
     }
@@ -551,7 +512,7 @@ bool same_party(via link, uint8_t source, uint8_t peer)
 // The radio's queue is full: try again next pass.
 bool radio_full(esp_err_t result)
 {
-    return result == ESP_ERR_ESPNOW_NO_MEM || mesh_radio::busy(result);
+    return result == ESP_ERR_ESPNOW_NO_MEM;
 }
 
 // Sessions over every Wi-Fi way: the session.h handshake, made over the
@@ -566,7 +527,7 @@ void start_session(via link, uint8_t peer, uint32_t now)
     peer_state &state = peer_via(link, peer);
     if (state.link.initiate(nonce, &hello))
     {
-        send_control_via(link, peer, hello, now);
+        send_control_via(link, peer, hello);
         state.last_hello_ms = now;
         state.hellos = 1;
         Serial.printf("%sSESSION hello -> %u\n", way(link).tag, peer);
@@ -589,7 +550,7 @@ void service_sessions(via link, uint32_t now, bool log_retries)
         if (state.link.initiating() && now - state.last_hello_ms >= period &&
             state.link.hello(&hello))
         {
-            send_control_via(link, peer, hello, now);
+            send_control_via(link, peer, hello);
             state.last_hello_ms = now;
             ++state.hellos;
             if (state.hellos == app_config::session_fast_hellos)
@@ -656,11 +617,11 @@ const char *take_session(via link, uint8_t source,
     switch (state.link.receive(content, nonce, &response))
     {
     case session::event::replied:
-        send_control_via(link, source, response, now);
+        send_control_via(link, source, response);
         Serial.printf("%sSESSION reply -> %u\n", way(link).tag, source);
         break;
     case session::event::established:
-        send_control_via(link, source, response, now);
+        send_control_via(link, source, response);
         print_session(link, "initiator", source);
         state.last_accept_ms = now;  // Online now.
         break;
@@ -676,12 +637,10 @@ const char *take_session(via link, uint8_t source,
     return nullptr;
 }
 
-// Pings every board with a session over `link` when due, or at once if
-// `at_once`, while `may_ping`, and logs when one comes or goes. Offline
-// boards less often (ISSUES.md B1); one back in range is found through its
-// own pings.
-void service_presence(via link, uint32_t now, bool may_ping, bool at_once,
-    const uint8_t *ping, size_t size)
+// Pings every board with a session over `link` when due, and logs when one
+// comes or goes. Offline boards less often (ISSUES.md B1); one back in
+// range is found through its own pings.
+void service_presence(via link, uint32_t now)
 {
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
@@ -692,11 +651,12 @@ void service_presence(via link, uint32_t now, bool may_ping, bool at_once,
         peer_state &state = peer_via(link, peer);
         const uint32_t period = state.shown_online ?
             app_config::presence_ping_ms : app_config::presence_offline_ping_ms;
-        if (may_ping && can_send_via(link, peer) &&
-            (at_once || now - state.last_presence_ms >= period))
+        if (can_send_via(link, peer) &&
+            now - state.last_presence_ms >= period)
         {
             state.last_presence_ms = now;
-            send_via(link, peer, ping, size);  // Best effort.
+            // Best effort.
+            send_via(link, peer, presence_ping, sizeof(presence_ping));
         }
         const bool online = online_via(link, peer, now);
         if (online != state.shown_online)
@@ -935,8 +895,7 @@ void send_encoded(const encoded &frame)
     {
         send_held();  // Its partner was skipped by the codec.
     }
-    const bool paired = tx_via == via::mesh ||
-        (tx_via == via::flood && flood_pair);
+    const bool paired = tx_via == via::flood && flood_pair;
     if (paired && redundancy && frame.sequence % 2 == 0)
     {
         tx_held = true;  // The next frame carries it.
@@ -1385,7 +1344,7 @@ void service_receiver(uint32_t now)
     voice_link::nack request = {};
     bool ask = false;
     // Across relays the answer takes longer (app_config).
-    const uint32_t retry_us = rx_via == via::flood || rx_via == via::routed ?
+    const uint32_t retry_us = rx_via == via::flood ?
         app_config::relay_nack_retry_us : app_config::nack_retry_us;
     {
         rx_guard hold;
@@ -1578,11 +1537,6 @@ void handle_data(const radio::received_frame &frame,
     {
         return;  // A broadcast key or its receipt (broadcast.inc).
     }
-    if (opened.type == secure_message::type_voice &&
-        take_mesh_choice(fields.source, payload, size))
-    {
-        return;  // The board chosen as mesh root (mesh.inc).
-    }
     const char *problem = take_payload(via::espnow, fields.source,
         opened.type, payload, size, arrival, now);
     if (problem)
@@ -1614,15 +1568,10 @@ bool place_call(uint8_t peer, uint32_t now)
         Serial.println("LINK refused: a LoRa connection is in progress");
         return false;
     }
-    if (mesh_in_use())
-    {
-        Serial.println("LINK refused: an ESP-MESH connection is in progress");
-        return false;
-    }
     if (busy_elsewhere(calls))
     {
-        Serial.println("LINK refused: a flood mesh or routed relay "
-                       "connection is in progress");
+        Serial.println("LINK refused: a flood mesh connection is in "
+                       "progress");
         return false;
     }
     if (!peer_online(peer, now))
@@ -1731,12 +1680,12 @@ void report_call(via link, uint32_t now)
     }
 }
 
-// Logs the route of `link`'s connection when it is first known and each
+// Logs the route of the flood connection when it is first known and each
 // time it changes (a middleman came or went).
-void report_route(via link, uint32_t now)
+void report_route(uint32_t now)
 {
-    const call::machine &machine = way(link).calls;
-    connection_log &log = log_of(link);
+    const call::machine &machine = flood_calls;
+    connection_log &log = log_of(via::flood);
     if (machine.current() != call::state::connected)
     {
         log.route[0] = '\0';
@@ -1748,20 +1697,19 @@ void report_route(via link, uint32_t now)
     }
     log.route_checked_ms = now;
     char route[sizeof(log.route)];
-    route_text_via(link, machine.peer(), now, route, sizeof(route));
+    relay_route_text(machine.peer(), now, route, sizeof(route));
     if (strcmp(route, "finding...") == 0 || strcmp(route, log.route) == 0)
     {
         return;
     }
     memcpy(log.route, route, sizeof(route));
-    Serial.printf("%sROUTE to %u (%s): %s\n", way(link).tag, machine.peer(),
-        device_name(machine.peer()), route);
+    Serial.printf("%sROUTE to %u (%s): %s\n", way(via::flood).tag,
+        machine.peer(), device_name(machine.peer()), route);
 }
 
 // Ends `link`'s connection if its board is gone: its presence pings
-// stopped (or, by way, its radio stopped acknowledging, this board left
-// the mesh, sends to it keep failing), or it made a new session, which
-// means it rebooted. Without this a request to a board that just went off
+// stopped (or, over ESP-NOW, its radio stopped acknowledging), or it made
+// a new session, which means it rebooted. Without this a request to a board that just went off
 // keeps being resent, and rings there the moment the board is back.
 void check_call_peer(via link, uint32_t now)
 {
@@ -1807,9 +1755,9 @@ void service_calls(via link, uint32_t now)
     machine.tick(now);
     send_call_messages(link);
     report_call(link, now);
-    if (link != via::espnow)
+    if (link == via::flood)
     {
-        report_route(link, now);  // ESP-NOW is always direct.
+        report_route(now);  // ESP-NOW is always direct.
     }
     ring_while_asked(machine, now);
 }
@@ -1843,10 +1791,11 @@ void print_call()
         static_cast<unsigned long>(log_of(via::espnow).send_drops));
 }
 
-// The sessions part of the `mesh`, `flood` and `routed` lines: each
-// board's session over `link`, with its route while online.
-void print_sessions(via link, uint32_t now)
+// The sessions part of the `flood` line: each board's session over the
+// flood mesh, with its route while online.
+void print_flood_sessions(uint32_t now)
 {
+    const via link = via::flood;
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
         if (!valid_peer(peer))
@@ -1857,7 +1806,7 @@ void print_sessions(via link, uint32_t now)
         if (session.established() && online_via(link, peer, now))
         {
             char route[40];
-            route_text_via(link, peer, now, route, sizeof(route));
+            relay_route_text(peer, now, route, sizeof(route));
             Serial.printf(" %u=%08lX (route %s)", peer,
                 static_cast<unsigned long>(session.session_id()), route);
         }
@@ -2091,8 +2040,7 @@ void service_handset(uint32_t now)
             static_cast<unsigned long>(app_config::opus_bitrate_bps),
             static_cast<unsigned long>(codec_lookahead));
     }
-    service_presence(via::espnow, now, true, false, presence_ping,
-        sizeof(presence_ping));
+    service_presence(via::espnow, now);
     service_calls(now);
     service_sender(now);
     service_receiver(now);
@@ -2283,9 +2231,9 @@ bool run_handset_command(const char *line, uint32_t now)
     {
         if (value != network_config::channel)
         {
-            // The mesh owns the channel, and every board must match.
-            Serial.printf("RADIO refused: ESP-MESH holds channel %u; only "
-                          "the rate can change\n",
+            // Every board must be on the same channel.
+            Serial.printf("RADIO refused: every board is on channel %u; "
+                          "only the rate can change\n",
                 network_config::channel);
         }
         else

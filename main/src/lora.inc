@@ -11,7 +11,7 @@
 // is separate from the ESP-NOW session: a frame recorded on one radio does
 // not open on the other.
 //
-// One connection at a time over any radio (ESP-NOW, ESP-MESH, LoRa):
+// One connection at a time over any radio (ESP-NOW, LoRa):
 // while one's connection is in progress, the others answer new requests
 // busy (call::machine::set_unavailable).
 //
@@ -670,16 +670,10 @@ bool place_lora_call(uint8_t peer, uint32_t now)
                        "progress");
         return false;
     }
-    if (mesh_in_use())
-    {
-        Serial.println("LORA LINK refused: an ESP-MESH connection is in "
-                       "progress");
-        return false;
-    }
     if (busy_elsewhere(lora_calls))
     {
-        Serial.println("LORA LINK refused: a flood mesh or routed relay "
-                       "connection is in progress");
+        Serial.println("LORA LINK refused: a flood mesh connection is in "
+                       "progress");
         return false;
     }
     if (!lora_can_send(peer))

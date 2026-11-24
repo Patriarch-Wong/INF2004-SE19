@@ -25,7 +25,6 @@
 #include "kdf.h"
 #include "lora_radio.h"
 #include "lora_text.h"
-#include "mesh_radio.h"
 #include "relay_frame.h"
 #include "mic.h"
 #include "network_config.h"
@@ -50,12 +49,10 @@
 // step; stage 4's session handshake derives a fresh session key from them at
 // every boot, and connection messages and voice are sealed under it.
 //
-// This build is handset_broadcast_integration_test cut down to four things
-// on the menu: the ESP-NOW flood mesh, LoRa, Broadcast and LoRa broadcast
-// (plus Status and Tools). The direct ESP-NOW connection is off the menu
-// (serial `connect N` still makes one; its pair sessions carry the
-// broadcast keys). ESP-MESH (mesh.inc) and the routed relay (relay.inc)
-// are compiled in but never started.
+// Four things are on the menu: the ESP-NOW flood mesh, LoRa, Broadcast and
+// LoRa broadcast (plus Status and Tools). The direct ESP-NOW connection is
+// off the menu (serial `connect N` still makes one; its pair sessions
+// carry the broadcast keys).
 //
 // The ESP-NOW flood mesh (relay.inc) carries connections, voice and hello
 // with every board relaying over ESP-NOW (a true mesh, no root, no
@@ -175,7 +172,7 @@ void send_control(uint8_t type, uint8_t destination, const uint8_t *mac,
     radio::send(mac, frame, size);
 }
 
-// A frame dropped, counted in `count` and logged with `prefix` ("MESH ").
+// A frame dropped, counted in `count` and logged with `prefix` ("FLOOD ").
 void log_reject(const char *prefix, uint32_t &count, const uint8_t *mac,
     unsigned size, const char *reason)
 {
@@ -191,7 +188,6 @@ void reject(const radio::received_frame &frame, const char *reason)
 }
 
 #include "handset.inc"
-#include "mesh.inc"
 #include "relay.inc"
 #include "lora.inc"
 #include "broadcast.inc"
@@ -220,7 +216,7 @@ void handle(const radio::received_frame &frame, uint32_t now)
 {
     if (relay_handle(frame, now))
     {
-        return;  // A flood or routed relay frame (relay.inc).
+        return;  // A flood frame (relay.inc).
     }
     secure_message::header fields = {};
     const status verified = secure_message::verify_hop(e2e_keys::network,
@@ -471,7 +467,6 @@ bool start()
                   "listed or without a MAC\n",
         loaded, unused);
     setup_lora_keys();
-    setup_mesh_keys();
     setup_relay_keys();
     setup_broadcast();
     list_keys();
@@ -500,7 +495,7 @@ void setup()
     Serial.println("Build mode: encrypted (AES-GCM end to end)");
     ready = start() && setup_handset();
     setup_ui();
-    // After the screen. ESP-MESH is not started in this build.
+    // After the screen.
     if (ready)
     {
         setup_relay();  // ESP-NOW is up already; nothing to wait for.

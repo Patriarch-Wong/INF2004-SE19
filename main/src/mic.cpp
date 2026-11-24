@@ -22,9 +22,6 @@ QueueHandle_t frame_queue = nullptr;
 std::atomic<bool> capturing{false};
 std::atomic<float> gain_value{app_config::mic_default_gain};
 std::atomic<float> ratio_value{app_config::mic_default_gate_ratio};
-std::atomic<float> latest_rms{0};
-std::atomic<float> latest_peak{0};
-std::atomic<int64_t> last_clip_us{-10000000};
 std::atomic<int16_t *> record_buffer{nullptr};
 std::atomic<uint32_t> record_wanted{0};
 std::atomic<uint32_t> record_count{0};
@@ -132,7 +129,6 @@ void task(void *)
                 value >= raw_full_scale - app_config::adc_clip_margin)
             {
                 ++a.clipped;
-                last_clip_us.store(esp_timer_get_time());
             }
             // Average mic_oversample readings into one sample, as the
             // sketch's readFiltered() did.
@@ -158,8 +154,6 @@ void task(void *)
             }
             const audio_dsp::level level =
                 audio_dsp::measure(done.pcm, frame_samples);
-            latest_rms.store(level.rms);
-            latest_peak.store(level.peak);
             a.energy += static_cast<double>(level.rms) * level.rms *
                 frame_samples;
             a.output_samples += frame_samples;
@@ -272,21 +266,6 @@ void set_capture(bool on)
 QueueHandle_t frames()
 {
     return frame_queue;
-}
-
-float level_rms()
-{
-    return latest_rms.load();
-}
-
-float level_peak()
-{
-    return latest_peak.load();
-}
-
-bool clipping_recently()
-{
-    return esp_timer_get_time() - last_clip_us.load() < 500000;
 }
 
 bool take_second(second *out)

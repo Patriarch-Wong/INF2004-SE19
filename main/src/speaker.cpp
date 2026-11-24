@@ -55,7 +55,6 @@ std::atomic<bool> clear_request{false};
 std::atomic<int> notch_count{0};
 std::atomic<float> fb_gain{1.0f};
 std::atomic<float> new_notch{0};
-std::atomic<float> latest_rms{0};
 std::atomic<uint32_t> measured_rate{0};
 
 // Test signal request, written by the loop and read by the task.
@@ -225,7 +224,6 @@ void task(void *)
         }
         notch_count.store(guard.notches());
         fb_gain.store(guard.feedback_gain());
-        latest_rms.store(audio_dsp::measure(input.pcm, frame_samples).rms);
         count(&counters::frames);
         previous_in_stream = streaming.load();
     }
@@ -367,11 +365,6 @@ void tone(uint32_t hz, uint32_t ms)
 bool testing()
 {
     return test_active.load();
-}
-
-float level_rms()
-{
-    return latest_rms.load();
 }
 
 uint32_t measured_rate_hz()

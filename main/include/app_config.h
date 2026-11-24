@@ -259,72 +259,11 @@ constexpr uint32_t lora_accept_repeat_ms = 400;
 constexpr uint8_t lora_text_tries = 3;
 constexpr uint32_t lora_text_retry_ms = 1500;
 
-// ESP-MESH (ESP-WIFI-MESH, mesh_radio.h and mesh.inc): a second Wi-Fi
-// transport with everything ESP-NOW has (connections, push-to-talk voice,
-// RIGHT hello, presence), over the mesh instead of directly. No router:
-// network_config::mesh_root_id is the fixed root. Connections, sessions
-// and presence use the ESP-NOW timings above.
-// Hops from the root, and children each board takes (Wi-Fi allows 10).
-constexpr int mesh_max_layer = 6;
-constexpr int mesh_ap_connections = 6;
-// Packets a board queues for forwarding (IDF default 32, minimum 16).
-constexpr int mesh_xon_qsize = 64;
-// A child silent this long is dropped by its parent. esp_mesh.h asks for
-// more than the 10 s default on an encrypted soft-AP, "such as 30". Presence
-// pings still find a board gone in presence_timeout_ms.
-constexpr int mesh_assoc_expire_s = 30;
-// The mesh receive task, on core 0 above the codec: it only copies each
-// packet into a queue for the loop.
-constexpr uint32_t mesh_task_stack = 4096;
-constexpr int mesh_core = 0;
-constexpr unsigned mesh_priority = 3;
-constexpr unsigned mesh_rx_queue_depth = 32;
-// Frames waiting for the mesh send task (mesh_radio.cpp), and how long it
-// waits for room in the mesh's own queue before dropping one.
-constexpr unsigned mesh_tx_queue_depth = 24;
-constexpr uint32_t mesh_send_wait_ms = 60;
-// Used only if this IDF refuses an empty router SSID: a router name that
-// does not exist, so the root still never joins anything.
-constexpr char mesh_placeholder_router[] = "SE19-NO-ROUTER";
-// The receive task's longest wait in esp_mesh_recv(), so a mesh restart
-// never has to wait long for it to step out.
-constexpr uint32_t mesh_receive_wait_ms = 100;
-
-// Root failover (mesh.inc). A board that finds no mesh to join becomes the
-// root once it has looked for its turn's wait: mesh_root_wait_ms for the
-// preferred root (network_config::mesh_root_id), plus
-// mesh_root_wait_step_ms for each place after it (the other boards in ID
-// order). So board 1 forms the mesh 6 s after power-on and the others join
-// it; with board 1 down, board 2 takes over after 14 s, board 3 after 22 s;
-// and a board coming back joins the mesh that is there.
-constexpr uint32_t mesh_root_wait_ms = 6000;
-constexpr uint32_t mesh_root_wait_step_ms = 8000;
-// A root nobody has joined for this long, plus up to the jitter, steps
-// down and looks for another mesh: it may have become root while out of
-// range of the others, and two roots would split the boards in two.
-constexpr uint32_t mesh_lonely_root_ms = 30000;
-constexpr uint32_t mesh_lonely_jitter_ms = 15000;
-// A mesh that failed to (re)start is tried again this often.
-constexpr uint32_t mesh_retry_ms = 10000;
-// The board chosen as root (Tools: Be mesh root) is told to every board
-// over ESP-NOW again this often, in case a frame was lost.
-constexpr uint32_t mesh_choice_repeat_ms = 10000;
-// The chosen root counts as up for this long after it last said so.
-constexpr uint32_t mesh_chosen_fresh_ms = 30000;
-// Restarts to regroup under it: at most this often; after this many in a
-// row without reaching its mesh, the usual takeover applies and they try
-// again only this often.
-constexpr uint32_t mesh_regroup_gap_ms = 20000;
-constexpr uint32_t mesh_regroup_tries = 3;
-constexpr uint32_t mesh_regroup_rest_ms = 120000;
-// No-parent-found reports are logged at most this often.
-constexpr uint32_t mesh_no_parent_log_ms = 10000;
-
-// ESP-NOW multi-hop (relay.inc, relay_frame.h): the flood mesh and the
-// routed relay, each with everything ESP-NOW has (connections, push-to-talk
-// voice, RIGHT hello, presence), carried across boards that relay. ESP-NOW
-// needs no router or access point, and neither has a root. Connections,
-// sessions and presence use the ESP-NOW timings above.
+// ESP-NOW multi-hop (relay.inc, relay_frame.h): the flood mesh, with
+// everything ESP-NOW has (connections, push-to-talk voice, RIGHT hello,
+// presence), carried across boards that relay. ESP-NOW needs no router or
+// access point, and the flood mesh has no root. Connections, sessions and
+// presence use the ESP-NOW timings above.
 // Transmissions a frame may take: up to 3 boards relay it on the way.
 constexpr uint8_t relay_max_hops = 4;
 // A copy of a frame seen this recently is dropped, not relayed again.
@@ -339,33 +278,20 @@ constexpr uint32_t relay_seen_window_ms = 5000;
 constexpr uint32_t relay_jitter_ms = 20;
 // Frames that can wait their turn at once; one more is passed on at once.
 constexpr size_t relay_queue_depth = 12;
-// Voice over a relay way asks again for a missing frame after this long,
+// Voice over the flood mesh asks again for a missing frame after this long,
 // not nack_retry_us. A NACK and the frame sent again each wait at every
 // relay, so across two relays the answer can take 80 ms; asking again at
 // 40 ms would have every board flood a second NACK and a second copy of
 // the frame, just when frames are being lost. Still three tries inside the
 // default playout buffer.
 constexpr uint32_t relay_nack_retry_us = 100000;
-// Flood voice sends every other frame, carrying the one before it, as
-// ESP-MESH does: 25 packets a second instead of 50, so half the airtime
+// Flood voice sends every other frame, carrying the one before it: 25
+// packets a second instead of 50, so half the airtime
 // with every relay counted. Each frame then goes once, so a lost packet
 // costs two frames and only a NACK recovers them. Off: every frame goes,
 // with the one before it as a spare. `flood pair on|off` changes it until
 // the next reset; it needs redundancy on.
 constexpr bool flood_pair_default = false;
-// Routed relay route discovery: a request floods, the target answers back
-// along its path. Asked again after this long without an answer, this many
-// times, then left for the backoff.
-constexpr uint32_t relay_request_retry_ms = 1000;
-constexpr uint8_t relay_request_tries = 3;
-constexpr uint32_t relay_request_backoff_ms = 5000;
-// A route in use is looked for again in the background this often (the
-// old one carries on until the answer), so a shorter path is found when
-// one appears. One not refreshed for the lifetime is dropped.
-constexpr uint32_t relay_route_refresh_ms = 20000;
-constexpr uint32_t relay_route_lifetime_ms = 60000;
-// Route errors to the same board at most this often.
-constexpr uint32_t relay_error_gap_ms = 1000;
 
 // Broadcasts (broadcast.inc). Each board's own broadcast key goes to every
 // board with a pair session, again this often until that board sends a

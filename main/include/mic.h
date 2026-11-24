@@ -61,11 +61,6 @@ float gate_ratio();
 void set_capture(bool on);
 QueueHandle_t frames();
 
-// Level of the latest frame (16-bit scale).
-float level_rms();
-float level_peak();
-bool clipping_recently();
-
 // The last full second; false if none since the previous call.
 bool take_second(second *out);
 

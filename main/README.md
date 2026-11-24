@@ -159,15 +159,16 @@ Everything on the buttons can also be done from the serial monitor; see
 | Gone from the menu | Still there? |
 | --- | --- |
 | ESP-NOW (direct connection) | Serial `connect N` still makes one. The pair sessions under it stay: they carry the broadcast keys |
-| ESP-MESH | Compiled in, never started: no mesh on the air, no `mesh` commands |
-| Routed relay | Compiled in, never set up; any routed frame from another build is dropped |
+| ESP-MESH | Removed from the source (`mesh.inc`, `mesh_radio.cpp`): no mesh on the air, no `mesh` commands |
+| Routed relay | Removed from the source; a routed frame from another build is rejected like any unknown frame |
 | Volume page | UP/DOWN on the connected and Broadcast screens still set the volume. Mute is serial `m` only |
 | Routes page | The route shows on the connected screen (`Route: 1 > 3 > 2, via Board 3`) |
 | Tools: leave/rejoin mesh, be mesh root, mute mesh, mute routed | |
 
-The cut is in `load_rows()` (`src/ui.inc`), `setup()` and `loop()`
-(`src/main.cpp`) and `relay_nets` (`src/relay.inc`). The unused screens and
-transports were left in the source, not deleted.
+The menu is `load_rows()` (`src/ui.inc`). The unused screens (ESP-NOW
+list, ESP-MESH, Routed relay, Volume, Routes) and transports (ESP-MESH,
+the routed relay) were deleted from the source on 2026-11-24;
+`tested_parts/handset_broadcast_integration_test` still has them.
 
 ## How the flood mesh works
 
@@ -269,7 +270,7 @@ sh tests/run_handset_tests.sh    # T5, T6, T8
 | T2 | No compiler warnings from the project | No `warning` line names a file in `src/` or `include/` |
 | T3 | Each board gets its own firmware | No two `firmware.bin` files are the same |
 | T4 | The PC and test scripts are valid | `tools/*.py` compile, `tests/*.sh` parse |
-| T5 | The menu is cut down (`tests/cutdown_test.py`, reads the source) | Menu rows are ESP-NOW flood, LoRa, Broadcast, LoRa broadcast, Status, Tools; Tools has the rate, Mute flood, Mute LoRa; ESP-MESH and the routed relay are not started |
+| T5 | The menu is cut down (`tests/cutdown_test.py`, reads the source) | Menu rows are ESP-NOW flood, LoRa, Broadcast, LoRa broadcast, Status, Tools; Tools has the rate, Mute flood, Mute LoRa; ESP-MESH and the routed relay are not in the source |
 | T6 | The settings are sane (`tests/config_test.cpp`) | Board IDs in order, no MAC twice, names fit the screen, the largest voice frame fits a flood envelope, the wait before asking again for a voice frame covers two relays |
 | T7 | Flood duplicate filter, hop limit and what a board does with a frame (`tests/relay_frame_test.cpp`) | A copy is dropped; a frame replayed under the next ID doesn't block the real one; a hop count raised on the way is refused; a frame is sent 4 times and no more; the destination takes it, another board passes it on, the origin and boards on its path drop it, a path that doesn't match is refused |
 | T8 | The inherited host suites: crypto, sessions, connections, LoRa texts, voice link, audio DSP, key file | Each prints `All ... passed` |
@@ -382,9 +383,10 @@ Accepted for a test project, and not defended:
 - `src/ui.inc`: the menu and Tools rows listed above; the Status page
   without the ESP-MESH and routed lines; the flood row is labelled
   `ESP-NOW flood`.
-- `src/main.cpp`: ESP-MESH is not started, serviced or given commands; the
-  `help` text.
-- `src/relay.inc`: only the flood mesh is set up and serviced; relays wait
+- `src/main.cpp`: no ESP-MESH (`src/mesh.inc`, `src/mesh_radio.cpp` and
+  `include/mesh_radio.h` are deleted); the `help` text.
+- `src/relay.inc`: only the flood mesh, the routed relay is deleted (with
+  its route messages in `relay_frame`); relays wait
   a random time (`relay_hold()`, `service_relay_queue()`); copies are told
   by the hop tag; a board no longer records its own frames in the
   duplicate filter (it already drops its own echoes by their source).
@@ -394,8 +396,8 @@ Accepted for a test project, and not defended:
   hellos it answered, not only the newest, so one replayed hello can't
   push out a handshake in progress ([Security](#security)).
 - `include/session.h`, `src/session.cpp` and where each transport loads
-  its keys (`src/main.cpp`, `src/relay.inc`, `src/lora.inc`,
-  `src/mesh.inc`): a session is bound to its transport
+  its keys (`src/main.cpp`, `src/relay.inc`, `src/lora.inc`): a session
+  is bound to its transport
   (`session::transport`). The frames look the same, but the keys derived
   from a pair key are new, so **this build makes no session with the
   earlier builds**, the `tested_parts` handset projects included.
