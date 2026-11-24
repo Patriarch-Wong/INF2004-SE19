@@ -78,6 +78,7 @@ struct relay_net
     uint32_t rejected = 0;
     uint32_t blocked = 0;
     uint32_t hop_drops = 0;   // Out of hops (TTL).
+    uint32_t busy_drops = 0;  // Not passed on: this board had a connection.
     uint32_t no_route = 0;    // Routed: nowhere to send it.
     uint32_t send_errors = 0;
     uint32_t requests = 0;    // Routed: route requests this board sent.
@@ -729,6 +730,10 @@ void service_relay_queue(uint32_t now)
         {
             ++relay_muted_tx;  // Muted while it waited.
         }
+        else if (any_connection())
+        {
+            ++flood_net.busy_drops;  // A connection began while it waited.
+        }
         else if (radio::send(radio::broadcast_mac, slot.bytes, slot.size) ==
             ESP_OK)
         {
@@ -743,10 +748,17 @@ void service_relay_queue(uint32_t now)
 
 // Passes a frame for another board on: the flood mesh broadcasts it again
 // after a random wait, the routed relay hands it to the next hop toward
-// its destination.
+// its destination. A board with a connection of its own (asking, asked or
+// connected, over any radio) passes nothing on: its radio time is for that
+// connection. Frames addressed to it are still taken (relay_deliver()).
 void relay_forward(relay_net &net, relay_frame::envelope head,
     const secure_message::header &fields, uint32_t now)
 {
+    if (any_connection())
+    {
+        ++net.busy_drops;
+        return;
+    }
     if (head.ttl <= 1 || head.path_length >= relay_frame::max_path)
     {
         ++net.hop_drops;
@@ -1002,7 +1014,8 @@ void print_relay(relay_net &net)
         Serial.printf(" with %u", net.calls.peer());
     }
     Serial.printf(" | sent %lu relayed %lu copies %lu delivered %lu "
-                  "rejected %lu blocked %lu out of hops %lu send errors %lu",
+                  "rejected %lu blocked %lu out of hops %lu busy drops %lu "
+                  "send errors %lu",
         static_cast<unsigned long>(net.sent),
         static_cast<unsigned long>(net.relayed),
         static_cast<unsigned long>(net.copies),
@@ -1010,6 +1023,7 @@ void print_relay(relay_net &net)
         static_cast<unsigned long>(net.rejected),
         static_cast<unsigned long>(net.blocked),
         static_cast<unsigned long>(net.hop_drops),
+        static_cast<unsigned long>(net.busy_drops),
         static_cast<unsigned long>(net.send_errors));
     if (net.link == via::routed)
     {

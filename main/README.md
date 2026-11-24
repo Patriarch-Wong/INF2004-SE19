@@ -13,7 +13,7 @@ plus Status and Tools. Two changes to how the flood mesh relays are below.
 
 | Menu row | What it does | Reaches a board out of range |
 | --- | --- | --- |
-| **ESP-NOW flood** | Pick a board, it accepts; hold OK to talk (Opus), RIGHT hello, UP/DOWN volume | yes: every board relays |
+| **ESP-NOW flood** | Pick a board, it accepts; hold OK to talk (Opus), RIGHT hello, UP/DOWN volume | yes: every board without a connection of its own relays |
 | **LoRa** | Pick a board, it accepts; UP "Hello from Board N", DOWN "Bye from Board N", with receipts | no |
 | **Broadcast** | No connection: hold OK to talk to all, RIGHT "Hello all" | no: not relayed |
 | **LoRa broadcast** | No connection: UP "Hello all", DOWN "Bye all" | no |
@@ -47,7 +47,10 @@ transports were left in the source, not deleted.
 2. Every board that hears it checks the frame's **hop tag** (HMAC under the
    network key), drops it if it has seen that frame in the last 5 s or is
    already on its path, and otherwise broadcasts it again with itself
-   added to the path and one hop fewer.
+   added to the path and one hop fewer. A board with a connection of its
+   own (asking, asked or connected, over any radio) doesn't pass frames
+   on, presence pings included, so boards that reach each other only
+   through it show as offline until it is free.
 3. Board 2 takes the first copy, opens it under the session key, and drops
    the later copies.
 
@@ -143,7 +146,8 @@ this build doesn't have, so its ESP-NOW and mixed cases won't run here.
 `flood mute on|off`, `relay block N`, `relay unblock N`. `accept`,
 `decline`, `disconnect`, `hello`, `talk`, `test` and `stop` act on the
 connection in progress. The `flood` line counts frames sent, relayed,
-dropped as copies and delivered.
+dropped as copies and delivered, and `busy drops`: frames for other boards
+this board didn't pass on because it had a connection of its own.
 
 Broadcast, LoRa and the log lines are as in
 [handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/README.md#serial-commands-optional).
