@@ -142,10 +142,11 @@ python3 ../shared_keys/generate_keys.py --check   # verify the shared file
 python3 ../shared_keys/find_keys.py .pio/build/*/firmware.bin
 ```
 
-The shared file has pair keys for five boards. Each `boardN` build compiles
-only its own block: the network key and its 4 pair keys. This project
-lists two boards, so it uses only the 1–2 key. It logs `Pair keys compiled
-in: 1 in use, 3 for boards not listed or without a MAC`.
+The shared file has pair keys for six boards (board 6 added 2026-11-24).
+Each `boardN` build compiles only its own block: the network key and its 5
+pair keys. This project lists two boards, so it uses only the 1–2 key. It
+logs `Pair keys compiled in: 1 in use, 4 for boards not listed or without
+a MAC` (3 before board 6 was added).
 
 The file is **committed on purpose** (at the user's request). This is a
 school project. The cost is real: the pair key is the root of the voice

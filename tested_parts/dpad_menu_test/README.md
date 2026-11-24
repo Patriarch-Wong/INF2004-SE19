@@ -1,13 +1,13 @@
 # Six-button menu on the ST7789 LCD
 
 Standalone PlatformIO / Arduino project for the ESP32-S3 N16R8 used by the
-other tests. Builds on [dpad_lcd_test](../dpad_lcd_test/) with the same
+other tests. Builds on [dpad_test](../dpad_test/) with the same
 buttons and LCD wiring, but uses them to navigate a menu on the 240 x 240
 1.3 inch ST7789 LCD: a main menu with four items, each opening its own page.
 
 ## Wiring
 
-Identical to [dpad_lcd_test](../dpad_lcd_test/README.md#wiring). With the
+Identical to [dpad_test](../dpad_test/README.md#wiring). With the
 board unplugged, wire each normally-open tactile button between 3V3 and
 its GPIO. The firmware enables the internal pull-downs, so released is LOW
 and pressed is HIGH. Never connect a button to 5 V.

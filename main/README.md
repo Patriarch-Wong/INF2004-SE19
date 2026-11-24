@@ -20,8 +20,139 @@ plus Status and Tools. Two changes to how the flood mesh relays are below.
 | **Status** | IDs, sessions, who is online over the flood mesh, LoRa radio, counters | |
 | **Tools** | `Block Board N`, ESP-NOW rate, `Mute flood`, `Mute LoRa` | |
 
-**Status: all five environments build, host tests pass (2026-11-10). Not
+**Status: all six environments build, host tests pass (2026-11-24). Not
 tested on hardware: the flood mesh never has been, in any project.**
+
+New here? Follow the [guide](#guide-from-parts-to-a-first-call) below: parts,
+wiring, flashing and a first call. The sections after it explain how the
+flood mesh works and how to test it.
+
+## Guide: from parts to a first call
+
+### What you need
+
+- Two or more ESP32-S3 N16R8 boards, up to six. A third board placed
+  between two others shows the relaying.
+- Per handset: a MAX9814 microphone, a speaker module, an ST7789 240 × 240
+  LCD, six push buttons and a Waveshare Core1121 LoRa module with a 915 MHz
+  antenna.
+- A USB cable to each board's **UART** connector (not the native USB one:
+  the OK button uses a USB data pin).
+- [PlatformIO](https://platformio.org/install) (VS Code extension or the
+  command line).
+
+Every board runs the same firmware and uses whatever is wired to it. A
+board used only as a relay needs none of the parts, only power; it can be
+driven over serial.
+
+### Wiring
+
+Wire with the board unplugged. Pins are set in `include/app_config.h`.
+
+| Part | Pin | ESP32-S3 |
+| --- | --- | --- |
+| MAX9814 mic | VDD / GND / OUT / GAIN | 3V3 / GND / **GPIO1** / 3V3 (AR not connected) |
+| Speaker module | VCC / GND / SIG | 5V / GND / **GPIO8** |
+| ST7789 LCD | VCC / GND | 5V / GND |
+| | SCL / SDA | GPIO12 / GPIO11 (no MISO, no CS) |
+| | RES / DC / BLK | GPIO10 / GPIO9 / GPIO14 |
+| Core1121 LoRa | MISO / MOSI / SCK | GPIO5 / GPIO6 / GPIO7 |
+| | NSS (CS) / RESET | GPIO15 / GPIO16 |
+| | BUSY / DIO9 (IRQ) | GPIO17 / GPIO18 |
+| | VCC / GND | 3V3 / GND |
+| Button UP | 3V3 → | GPIO48 |
+| Button DOWN | 3V3 → | GPIO47 |
+| Button LEFT | 3V3 → | GPIO21 |
+| Button RIGHT | 3V3 → | GPIO45 |
+| Button OK | 3V3 → | GPIO20 |
+| Button CANCEL | 3V3 → | GPIO0 |
+
+- Each button connects **3V3** to its GPIO; the internal pull-downs are on.
+  Never connect a button to 5 V.
+- Attach the LoRa antenna before powering the board.
+- **GPIO45 (RIGHT)** is a strapping pin: holding RIGHT at reset stops the
+  board from booting.
+- **GPIO0 (CANCEL)** is the BOOT pin. Don't press BOOT while holding CANCEL
+  (that shorts 3V3 to GND). If the boot log shows `CANCEL ... (held at
+  startup, ignored)` with nothing pressed, wire CANCEL from GPIO0 to GND
+  instead and set `cancel_active_low = true`.
+- There is no separate push-to-talk button (`ptt_pin = -1`): holding OK
+  while connected is push-to-talk.
+
+### Boards
+
+Each board is built for its own ID, and checks at boot that its MAC matches
+(`include/network_config.h`).
+
+| Board | Environment | Wi-Fi station MAC |
+| --- | --- | --- |
+| 1 | `board1` | `E0:72:A1:D8:E2:10` |
+| 2 | `board2` | `E0:72:A1:D7:FA:B8` |
+| 3 | `board3` | `E0:72:A1:D8:F6:20` |
+| 4 | `board4` | `E0:72:A1:D8:0E:48` |
+| 5 | `board5` | `E0:72:A1:D5:64:0C` |
+| 6 | `board6` | `E0:72:A1:D9:A4:94` (added 2026-11-24 as an extra relay) |
+
+The table is the one from `handset_peer_mesh_integration_test`, not the
+copied project's, plus board 6. To use a different board, flash any
+environment on it, read `Wi-Fi station MAC` from its boot log, put that MAC
+in the slot you want, then rebuild and flash **every** board so they all
+list it. The keys need no step: `shared_keys/e2e_keys.h` already holds a
+pair key for every pair of the six boards.
+
+### Build and flash
+
+Every board must run this build: the flood envelope is the same on the
+wire, but a board on an older build tells copies apart the old way.
+
+```sh
+cd main
+pio run                      # all six boards
+pio run -e board1 -t upload  # then board2, ... one board per environment
+pio device monitor           # 921600 baud
+```
+
+Before each upload hold **BOOT**, tap **RESET**, release **BOOT**; tap
+**RESET** again afterwards. With several boards plugged in, add
+`--upload-port` and `--port`.
+
+### A first call
+
+1. Power two flashed boards. Each shows the menu: `ESP-NOW flood`, `LoRa`,
+   `Broadcast`, `LoRa broadcast`, `Status`, `Tools`. UP/DOWN choose, OK
+   selects, CANCEL goes back.
+2. On board 1 open **ESP-NOW flood** and press OK on `Connect Board 2`. A
+   dot beside a board means it is online over the flood mesh.
+3. Board 2 beeps and shows the request. **OK** accepts, **CANCEL**
+   declines.
+4. Once connected, **hold OK to talk** and release to listen (one side at a
+   time). **RIGHT** sends "Hello from Board N", **UP/DOWN** set the volume,
+   **CANCEL** disconnects both sides.
+5. **See a relay.** Power a third board with this build. On board 1 choose
+   Tools → `Block Board 2`, and on board 2 `Block Board 1`, so the two
+   can't hear each other directly. Connect again: the connected screen
+   shows the path, for example `Route: 1 > 3 > 2, via Board 3`.
+6. **LoRa text.** Menu → **LoRa** → a board, which accepts. UP sends "Hello
+   from Board N" and DOWN "Bye from Board N"; each shows `Delivered` or
+   `Not delivered`.
+7. **Broadcast.** Menu → **Broadcast** needs no connection: hold OK to talk
+   to every board in range, RIGHT sends "Hello all". **LoRa broadcast**
+   sends "Hello all" (UP) and "Bye all" (DOWN).
+
+Everything on the buttons can also be done from the serial monitor; see
+[Serial commands](#serial-commands-optional).
+
+### If something goes wrong
+
+| What you see | Cause and fix |
+| --- | --- |
+| Upload can't connect | Hold BOOT, tap RESET, release BOOT, then upload again |
+| Nothing on the serial monitor | Use the UART connector at 921600 baud |
+| Board doesn't start | RIGHT was held at reset (GPIO45), or BOOT is still held |
+| `Built for device N, but this board is device M` | The wrong environment is on this board, or its MAC is not in `include/network_config.h` |
+| A board never shows as online | It is off, on another build or channel, or reachable only through a board that is in a connection (such a board doesn't relay) |
+| LoRa row shows a failed radio | Check the Core1121 wiring and antenna; the radio is retried every 5 s and the rest of the handset keeps working |
+| No sound | Raise the volume with UP on the connected screen; `m` on serial toggles mute |
 
 ## What was cut
 
@@ -93,23 +224,6 @@ hears every other, but a board that is the only way to the destination
 would also cancel, and frames would go missing exactly when a relay is
 needed.
 
-## Build and flash
-
-Wiring is unchanged
-([handset_lora_integration_test](../tested_parts/handset_lora_integration_test/README.md#wiring)).
-Every board must run this build: the flood envelope is the same on the
-wire, but a board on an older build tells copies apart the old way.
-
-```powershell
-cd main
-pio run                      # all five boards
-pio run -e board1 -t upload  # hold BOOT, tap RESET first; then board2, ...
-```
-
-The board table in `include/network_config.h` is the one from
-`handset_peer_mesh_integration_test` (board 3 is `E0:72:A1:D8:F6:20`, board
-5 is set), not the copied project's.
-
 ## Test cases
 
 None of these needs a board; nothing is uploaded.
@@ -123,7 +237,7 @@ sh tests/run_handset_tests.sh    # T5, T6, T8
 
 | ID | Test case | Passes when |
 | --- | --- | --- |
-| T1 | Every board's firmware compiles (`board1`–`board5`) | `pio run -e boardN` succeeds and `firmware.bin` is made |
+| T1 | Every board's firmware compiles (`board1`–`board6`) | `pio run -e boardN` succeeds and `firmware.bin` is made |
 | T2 | No compiler warnings from the project | No `warning` line names a file in `src/` or `include/` |
 | T3 | Each board gets its own firmware | No two `firmware.bin` files are the same |
 | T4 | The PC and test scripts are valid | `tools/*.py` compile, `tests/*.sh` parse |
@@ -132,7 +246,8 @@ sh tests/run_handset_tests.sh    # T5, T6, T8
 | T7 | Flood duplicate filter (`tests/relay_frame_test.cpp`) | A copy is dropped; a frame replayed under the next ID doesn't block the real one |
 | T8 | The inherited host suites: crypto, sessions, connections, LoRa texts, voice link, audio DSP, key file | Each prints `All ... passed` |
 
-Last run 2026-11-10: all pass.
+Last run 2026-11-24, with board 6 added: all pass (21 build checks, every
+host suite).
 
 Testing on the boards is a separate step, after flashing:
 `tools/relay_test.py` and `tools/broadcast_test.py` drive boards 1 and 2
@@ -151,6 +266,24 @@ this board didn't pass on because it had a connection of its own.
 
 Broadcast, LoRa and the log lines are as in
 [handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/README.md#serial-commands-optional).
+
+## Limits
+
+- **Not run on hardware yet** as a flood mesh; the results above are builds
+  and host tests.
+- **Half duplex.** One side talks at a time.
+- **One connection at a time per board**, over either radio. A board in a
+  connection doesn't relay, so boards that reach each other only through
+  it are cut off until it is free.
+- **At most 4 transmissions per frame** (`relay_max_hops`): up to three
+  boards relay it on the way.
+- **Broadcasts are not relayed.** They reach only boards in direct range.
+- **LoRa carries text only**, "Hello" and "Bye"; voice is ESP-NOW only.
+- **Airtime.** Every board that hears a flood frame sends it once more, so
+  more boards in range means more traffic on the channel.
+- **The keys are demo keys, committed on purpose** (`shared_keys/`). Anyone
+  with this repository can read the traffic; make new keys with
+  `shared_keys/generate_keys.py --force` before any real use.
 
 ## What changed from handset_broadcast_integration_test
 

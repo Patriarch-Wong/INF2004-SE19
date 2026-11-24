@@ -8,6 +8,25 @@ All firmware targets the **ESP32-S3 N16R8** (16 MB Quad-SPI flash, 8 MB
 Octal-SPI PSRAM) using PlatformIO with the Arduino framework, pinned to
 `espressif32@7.1.3` (Arduino-ESP32 2.0.17).
 
+## What it is
+
+An encrypted push-to-talk handset that needs no router, access point or
+phone network. Each handset is an ESP32-S3 with a microphone, speaker,
+240 × 240 LCD, six buttons and a LoRa module.
+
+| | How |
+| --- | --- |
+| **Voice** | Hold a button to talk. Opus at 24 kbit/s in 20 ms frames, over ESP-NOW on 2.4 GHz |
+| **Reaching a far board** | ESP-NOW flood mesh: every board that is not in a connection of its own passes frames on, up to 4 transmissions per frame |
+| **Text** | "Hello" and "Bye" over LoRa at 915 MHz, with delivery receipts |
+| **Broadcast** | Voice and text to every board in range at once, with no connection |
+| **Encryption** | Boards are pre-paired with one key per pair. Each boot they derive a new session key from it, and every message is sealed end to end with AES-128-GCM and checked against a replay window. Relaying boards can't read what they pass on |
+
+The firmware to build and flash is [`main/`](main/); its
+[README](main/README.md) is a guide from parts and wiring to a first call.
+[`tested_parts/`](tested_parts/) holds each part tested on its own, and the
+earlier handset builds that led to `main/`.
+
 ## Team
 
 | Name | Student ID | Role / contribution |
@@ -23,12 +42,16 @@ Octal-SPI PSRAM) using PlatformIO with the Arduino framework, pinned to
 INF2004-SE19/
 ├── main/                     Main project: the handset ESP-NOW flood build (see below)
 │   └── shared_keys/          Copy of tested_parts/shared_keys (same keys)
+├── LICENSE                   MIT licence for the team's own code
+├── CONTRIBUTING.md           Coding standard
 ├── esp32_s3n16r8_template/   Reusable PlatformIO starter for the N16R8 board
 └── tested_parts/             One standalone PlatformIO project per component test
     ├── button_test/          Debounced tactile button + LED
     ├── button_lcd_test/      ST7789 LCD video player from SD
     │   ├── wireless_av/      ESP-NOW file transfer to SD, then A/V playback
     │   └── wireless_stream/  H.264/AAC playback while receiving into RAM
+    ├── dpad_test/            Six debounced buttons (D-pad, confirm, cancel) shown on the LCD
+    ├── dpad_menu_test/       Menu navigation on the LCD with the six dpad_test buttons
     ├── codec_test/           Opus encode/store/decode round trip
     ├── codec_sdtest/         Opus + onboard SDMMC with reusable C/C++ APIs
     ├── e2e_broadcast_test/   Encrypted one-to-many Opus broadcast, shared group key
@@ -43,16 +66,23 @@ INF2004-SE19/
     ├── espnow_sd_test/       One-way ESP-NOW transfer saved and verified on SD
     ├── lcd_lora_test/        LCD + LoRa on separate SPI buses, hello/bye texts both ways (915 MHz)
     ├── lora_test/            Core1121 868 MHz LoRa broadcast send and receive
+    ├── lora_encrypt_test/    Direct AES-256-GCM LoRa serial chat at 915 MHz, no relays
     ├── mic_speaker_e2e_test/ Mic on one board to speaker on another, encrypted
     ├── mic_speaker_e2e_test2/ mic_speaker_e2e_test with auto-unmute on incoming audio
-    ├── shared_keys/          One key file (network + pair keys, boards 1–5) shared by projects
+    ├── shared_keys/          One key file (network + pair keys, boards 1–6) shared by projects
     ├── handset_integration_test/ D-pad + LCD connect/disconnect and encrypted push-to-talk voice
     ├── handset_lora_integration_test/ handset_integration_test plus LoRa connections sending hello/bye
     ├── handset_espmesh_integration_test/ handset_lora_integration_test plus ESP-MESH (no router) voice connections
     ├── handset_espnow_mesh_integration_test/ handset_espmesh_integration_test plus ESP-NOW flood mesh and routed relay
+    ├── handset_broadcast_integration_test/ handset_espnow_mesh_integration_test plus voice and text to every board at once
     ├── handset_espmesh_autoroot_integration_test/ newest build without flood/routed relay; ESP-MESH root elected automatically
+    ├── four_board_espmesh_test/ Four-board ESP-MESH relay demo: board 3 the fixed root, plus a keyless sniffer
     ├── espmesh_allnodes_test/ ESP-MESH(ALLNODES) kit: two-way routed ESP-NOW paths through any board, plus the keyless sniffer
     ├── handset_espnow_flood_integration_test/ broadcast build cut down to ESP-NOW flood, LoRa and the two broadcasts
+    ├── espcam_ov5640_test/   OV5640 camera self-test, live view over the USB cable
+    ├── espcam_espnow_video_test/ Encrypted OV5640 video to a 240×240 LCD over ESP-NOW
+    ├── espcam_espnow_live_test/ Low-lag live camera link over ESP-NOW, no encryption
+    ├── espcam_espnow_live_encrypted_test/ The live camera link sealed with the session key
     ├── mictospeaker_test/    I2S mic → ESP-NOW ADPCM → PDM speaker
     ├── opus_broadcast_test/  One-to-many Opus broadcast over ESP-NOW, no encryption
     └── radio_sniffer/        Keyless passive ESP-NOW + LoRa capture, never transmits
@@ -60,7 +90,8 @@ INF2004-SE19/
 
 Every directory containing a `platformio.ini` is an independent project with
 its own README covering wiring, configuration, build/upload steps, and
-measured results.
+measured results. [`tested_parts/README.md`](tested_parts/README.md) has a
+one-line description of each.
 
 ## Main project
 
@@ -71,22 +102,30 @@ the ESP-NOW and LoRa broadcasts. Its keys are in
 [`main/shared_keys`](main/shared_keys/), a copy of
 [`tested_parts/shared_keys`](tested_parts/shared_keys/) with the same keys;
 keep the two the same. Build it with `cd main && pio run -e board1` (environments
-`board1` to `board5`).
+`board1` to `board6`; board 6 was added on 2026-11-24 as an extra relay).
+
+Start with the [guide in `main/README.md`](main/README.md#guide-from-parts-to-a-first-call):
+what you need, the wiring table, the board table, flashing, a first call
+step by step, and what to check when something goes wrong. It builds and
+passes its host tests; it has not been run on hardware yet.
 
 ## Hardware
 
 | Component | Used in |
 | --- | --- |
-| ESP32-S3 N16R8 development board (x3 for the `e2e_*` and broadcast tests; x2 for `espnow_*`, `mictospeaker_test`; x2 or more for `lora_test`) | All |
+| ESP32-S3 N16R8 development board (x3 for the `e2e_*` and broadcast tests; x2 for `espnow_*`, `mictospeaker_test`; x2 or more for `lora_test`; up to x6 for `main` and the handset builds) | All |
 | Onboard SD slot (1-bit SDMMC: CMD 38, CLK 39, D0 40) | `codec_sdtest`, `espnow_sd_test`, `button_lcd_test` |
 | 4-pin tactile pushbutton + LED with 330 Ω resistor | `button_test`, `button_lcd_test` |
-| ST7789 240 × 240 SPI LCD | `button_lcd_test` |
+| ST7789 240 × 240 SPI LCD | `button_lcd_test`, `dpad_test`, `dpad_menu_test`, `lcd_lora_test`, the handset builds, the display side of the `espcam_espnow_*` tests |
+| Six tactile pushbuttons (D-pad, confirm, cancel) | `dpad_test`, `dpad_menu_test`, the handset builds |
 | Waveshare Core1121 LoRa module + 868 MHz antenna (x2) | `lora_test` |
+| Waveshare Core1121 LoRa module + 915 MHz antenna | `lcd_lora_test`, `lora_encrypt_test`, `handset_lora_integration_test` and every later handset build, `main` |
+| ESP32-S3 N16R8 CAM board with an OV5640 camera | `espcam_ov5640_test`, the camera side of the `espcam_espnow_*` tests |
 | ICS43434 I2S MEMS microphone | `mictospeaker_test` |
 | YwRobot powered speaker module | `mictospeaker_test` |
-| MAX9814 analog microphone, speaker module on 8-bit PWM (GPIO1 mic, GPIO8 speaker) | `mic_speaker_e2e_test` |
-| MAX9814 analog microphone, speaker module on 8-bit PWM (GPIO1 mic, GPIO8 speaker) | `mic_speaker_e2e_test2` |
+| MAX9814 analog microphone, speaker module on 8-bit PWM (GPIO1 mic, GPIO8 speaker) | `mic_speaker_e2e_test`, `mic_speaker_e2e_test2` |
 | MAX9814 mic, PWM speaker, ST7789 LCD and six D-pad buttons on one handset | `handset_integration_test` |
+| The same handset plus the Core1121 LoRa module | `main` and every handset build from `handset_lora_integration_test` on ([wiring](main/README.md#wiring)) |
 
 Pin assignments differ between tests; check the project README and its
 `include/app_config.h` before wiring.
@@ -107,7 +146,7 @@ Pin assignments differ between tests; check the project README and its
    pio device monitor
    ```
 
-Each project provides two environments:
+Most component projects provide two environments:
 
 | Environment | Serial connection |
 | --- | --- |
@@ -118,6 +157,13 @@ Select one with `-e <environment>`. If upload cannot enter download mode,
 hold **BOOT**, tap **RESET**, release **BOOT**, then retry. Several radio
 projects set `before_reset = no_reset` and always need this manual step.
 
+Projects that build a different firmware per board name their
+environments after the board instead: `board1` … `board6` in `main/`,
+`board1` … `board5` (some with `sniffer`) in the handset builds, `camera`
+and `display` in the `espcam_espnow_*` tests. Run `pio run` with no `-e`
+to build them all, and check the project's README for which board gets
+which.
+
 To start a new component, copy `esp32_s3n16r8_template/` as described in
 its [README](esp32_s3n16r8_template/README.md).
 
@@ -125,8 +171,11 @@ its [README](esp32_s3n16r8_template/README.md).
 
 | Project | Result |
 | --- | --- |
+| [main](main/) | The main firmware: all six environments build with no warnings and every host suite passes (2026-11-24); not yet hardware-tested |
 | [button_test](tested_parts/button_test/) | UART and native USB builds pass; hardware validation pending |
 | [button_lcd_test](tested_parts/button_lcd_test/) | SD video playback with pause button; wireless A/V and streaming variants transfer with CRC32 verification |
+| [dpad_test](tested_parts/dpad_test/) | Six buttons shown on the LCD; hardware validation of this project pending (the handset builds use the same buttons and LCD wiring) |
+| [dpad_menu_test](tested_parts/dpad_menu_test/) | Menu navigation with the six buttons; hardware validation of this project pending |
 | [codec_test](tested_parts/codec_test/) | Three Opus hardware round trips passed over UART |
 | [codec_sdtest](tested_parts/codec_sdtest/) | Three Opus + SD hardware round trips passed |
 | [e2e_broadcast_test](tested_parts/e2e_broadcast_test/) | Hardware-tested: board 1 broadcasts AES-GCM encrypted Opus to boards 2 and 3. Fails at 6 Mbps (up to 26.53% lost); passes at 1 Mbps with 2,997–3,000 of 3,000 frames per stream, 0 security rejects |
@@ -148,11 +197,13 @@ its [README](esp32_s3n16r8_template/README.md).
 | [lora_encrypt_test](tested_parts/lora_encrypt_test/) | Direct AES-256-GCM serial chat, no relays; builds and host crypto tests pass; user confirmed working on hardware |
 | [mic_speaker_e2e_test](tested_parts/mic_speaker_e2e_test/) | Mic and speaker follow ESP32_Mic_Loopback_v4.ino; one live stream arrived intact (134/134 frames, CRC match) but the speaker was muted, so not yet heard. Earlier PDM build passed E1 (500/500, 26.60 dB) |
 | [mic_speaker_e2e_test2](tested_parts/mic_speaker_e2e_test2/) | Auto-unmute variant of `mic_speaker_e2e_test`; builds and host tests pass; not yet hardware-tested |
-| [handset_integration_test](tested_parts/handset_integration_test/) | D-pad + LCD: connect to a pre-paired handset, push-to-talk encrypted voice, disconnect or link loss drops both sides; builds and host tests (including connections) pass; not yet hardware-tested |
+| [handset_integration_test](tested_parts/handset_integration_test/) | D-pad + LCD: connect to a pre-paired handset, push-to-talk encrypted voice, disconnect or link loss drops both sides; builds and host tests (including connections) pass; hardware-tested on boards 1 and 2 on 2026-11-03, driven over serial: H1–H3, H5–H8 and H11–H16 pass, H9 had 19 of 20 streams intact; talking and listening and the physical OK and CANCEL buttons checked by hand; H10 still to do |
 | [handset_lora_integration_test](tested_parts/handset_lora_integration_test/) | handset_integration_test plus LoRa: Menu → LoRa → board, accept/decline, then UP sends "Hello from Board N" and DOWN "Bye from Board N", encrypted; radio starts in the background and never freezes the menu; hardware-tested on boards 1 and 2: connect, texts, decline/cancel/no answer, glare, busy, link loss, reboot (34/34 edge checks); ESP-NOW voice not re-run in this build |
 | [handset_espmesh_integration_test](tested_parts/handset_espmesh_integration_test/) | handset_lora_integration_test plus ESP-MESH: Menu → ESP-MESH → board, accept/decline, hold OK to talk, RIGHT hello, all encrypted, as over ESP-NOW; no router (board 1 is the preferred mesh root; if it is down the next board takes over); all five environments build; not yet hardware-tested (`tools/mesh_test.py` ready) |
 | [handset_espnow_mesh_integration_test](tested_parts/handset_espnow_mesh_integration_test/) | handset_espmesh_integration_test plus the same connections, voice and hello over ESP-NOW with every board relaying, two ways: flood mesh (re-broadcast) and routed relay (route discovery, hop-by-hop unicast); route shown on screen; no router, no root; builds; not yet hardware-tested (`tools/relay_test.py` ready) |
+| [handset_broadcast_integration_test](tested_parts/handset_broadcast_integration_test/) | handset_espnow_mesh_integration_test plus broadcast to every board at once, no connection: ESP-NOW push-to-talk voice and "Hello all", LoRa "Hello all" / "Bye all", sealed under each sender's broadcast key; all five environments build; ran on boards 1–4 on 2026-11-06 for the `radio_sniffer` capture (sessions, presence pings and broadcast voice all opened, 0 bad tags); its own hardware test steps not yet run |
 | [handset_espmesh_autoroot_integration_test](tested_parts/handset_espmesh_autoroot_integration_test/) | handset_broadcast_integration_test without the ESP-NOW flood mesh and routed relay; ESP-MESH is the only mesh and its root is elected over ESP-NOW presence pings (idle board first, then the one hearing the most boards, then lowest ID), so an unused board in the middle relays; all five environments build, host tests pass (`root_election` suite); not yet hardware-tested (`tools/mesh_test.py` ready, with an `elect` test) |
+| [four_board_espmesh_test](tested_parts/four_board_espmesh_test/) | Four-board ESP-MESH relay demo converted from the Arduino kit: handsets 1 and 2 join board 3, the fixed root, and a keyless sniffer captures both hops; all four environments build; the mesh run through board 3 and the sniffer capture are not yet done on hardware |
 | [espmesh_allnodes_test](tested_parts/espmesh_allnodes_test/) | ESP-MESH(ALLNODES) kit: handset_espnow_mesh_integration_test with the routed relay reworked so a call keeps one confirmed path in both directions, any board relaying over ESP-NOW; sixth environment is a keyless sniffer that follows each relayed frame hop by hop on its serial monitor; board MACs as handset_peer_mesh_integration_test; all six environments build; not yet hardware-tested |
 | [handset_espnow_flood_integration_test](tested_parts/handset_espnow_flood_integration_test/) | handset_broadcast_integration_test cut down to four things on the menu (ESP-NOW flood mesh, LoRa, Broadcast, LoRa broadcast) plus Status and Tools; ESP-MESH and the routed relay are not started; flood relays wait a random 0–20 ms and tell copies by the hop tag instead of the unauthenticated envelope ID; all five environments build, host tests pass (`relay_frame` suite); not yet hardware-tested |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
@@ -178,13 +229,19 @@ buffer. Compare results only when these match, or say what differs.
 | `e2e_broadcast_test` | 11 | 6 Mbps run 1, 1 Mbps run 2; fixed at boot | 200 ms |
 | `mic_speaker_e2e_test` | 11 | 1 Mbps; fixed at boot | 300 ms (60–1000), with NACK retransmission |
 | `mic_speaker_e2e_test2` | 11 | 1 Mbps; fixed at boot | 300 ms (60–1000), with NACK retransmission |
-| `handset_integration_test` | 11 | 1 Mbps; fixed at boot | 300 ms (60–1000), with NACK retransmission |
+| `handset_integration_test` and every later handset build, `main` | 11 | 1 Mbps; fixed at boot (`radio CH MBPS` changes it until reset) | 300 ms (60–1000), with NACK retransmission |
+| `espcam_espnow_video_test` | 1 | 1 Mbps | n/a (video frames) |
+| `espcam_espnow_live_test`, `espcam_espnow_live_encrypted_test` | 1 | 6 Mbps | none: newest frame only |
+| `radio_sniffer` | 11 by default | listens only | n/a |
 | `mictospeaker_test` | 6 | 6 Mbps | ADPCM stream, not comparable |
 
 Stage 5 (0.5% late at 60 ms) and stage 6 (2.87% late at 60 ms) differ in
 channel as well as codec, so the gap is not caused by Opus alone.
 Broadcast frames get no acknowledgement or retry and needed 1 Mbps;
 relayed unicast needed 6 Mbps for two-way voice.
+
+LoRa is separate from the table above: 868 MHz in `lora_test`, 915 MHz
+everywhere else (SF7, 125 kHz bandwidth, 0 dBm in `main`).
 
 ## Coding standard
 
@@ -206,3 +263,16 @@ BARR-C applies where relevant to C code.
 - Libraries pinned in `lib_deps`: Adafruit ST7735 and ST7789 Library,
   TJpg_Decoder, RadioLib, and
   [arduino-libopus](https://github.com/pschatzmann/arduino-libopus).
+
+## Licence
+
+The team's own code is under the [MIT licence](LICENSE). Third-party
+components keep their own licences: the libraries fetched through
+`lib_deps`, and the Espressif codecs vendored under
+`tested_parts/button_lcd_test/wireless_stream/lib/` and
+`tested_parts/mictospeaker_test/sd_file_player/lib/`, which may be used
+with Espressif products only.
+
+The keys in `shared_keys/` are demo keys, committed on purpose so every
+board builds without a pairing step. Make new ones
+(`generate_keys.py --force`) before any real use.

@@ -28,4 +28,4 @@ c++ $flags src/audio_dsp.cpp tests/dsp_test.cpp -o "$output/dsp"
 "$output/dsp"
 python3 tests/check_streams_test.py
 python3 tests/cutdown_test.py
-python3 shared_keys/generate_keys.py --check
+python3 shared_keys/generate_keys.py --check --boards 6

@@ -29,7 +29,7 @@ struct device
     const char *name;  // Shown on screen; at most 12 characters.
 };
 
-// Up to five handsets, pre-paired: shared_keys/e2e_keys.h holds
+// Up to six handsets, pre-paired: shared_keys/e2e_keys.h holds
 // a pair key for every pair of boards. Each board checks at boot that its
 // MAC matches the E2E_DEVICE_ID it was built for; frames from MACs not
 // listed are dropped.
@@ -57,6 +57,10 @@ constexpr device devices[] = {
     // Given by the user on 2026-11-06; board 1 of the earlier e2e tests
     // (e2e_broadcast_test, e2e_opus_test, ...).
     {5, {0xE0, 0x72, 0xA1, 0xD5, 0x64, 0x0C}, "Board 5"},
+    // Added 2026-11-24 as a relay (the board on USB serial 5B5F021589, the
+    // older projects' board 3 and the ESP-NOW camera viewer). A full
+    // handset build like the others; every board relays.
+    {6, {0xE0, 0x72, 0xA1, 0xD9, 0xA4, 0x94}, "Board 6"},
 };
 constexpr size_t device_count = sizeof(devices) / sizeof(devices[0]);
 

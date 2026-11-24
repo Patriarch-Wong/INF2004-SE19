@@ -2,6 +2,8 @@
 
 This ESP32-S3 N16R8 handset project uses ESP-NOW for every AllNodes hop. Each board can send, receive, and relay. A call uses one confirmed path in both directions, reversing the board order for return traffic. The handset also retains its native ESP-MESH, flood mesh, and LoRa modes. [INF2004-SE19 baseline at `1ba7d6c`](https://github.com/Patriarch-Wong/INF2004-SE19/tree/1ba7d6c8e7020609750a28affd683b250caccf53/tested_parts/handset_espnow_mesh_integration_test)
 
+**Status: all six environments build (`board1`–`board5`, `sniffer`). Not yet tested on hardware.**
+
 ## Build and flash
 
 Open this folder in PlatformIO. `src/ESP_MESH_ALLNODES.ino` is the Arduino entry point. Keep the whole folder together, including the other sources, headers, and `partitions.csv`. The keys are the repository's shared demo keys in [`../shared_keys/e2e_keys.h`](../shared_keys/README.md), so build it inside `tested_parts`.

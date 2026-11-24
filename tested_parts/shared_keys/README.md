@@ -6,7 +6,7 @@ and adding a board needs no key step.
 
 | File | What |
 | --- | --- |
-| `e2e_keys.h` | Network key and 10 pair keys for boards 1–5. **Committed on purpose** |
+| `e2e_keys.h` | Network key and 15 pair keys for boards 1–6. **Committed on purpose** |
 | `generate_keys.py` | Extends, checks or replaces `e2e_keys.h` |
 | `find_keys.py` | Reports which keys appear in firmware images or logs |
 
@@ -42,17 +42,17 @@ Then use `#include "e2e_keys.h"` as before. Don't keep a copy in the
 project's `include/`. Each project's `.gitignore` lists
 `include/e2e_keys.h`, so a stray copy is never committed.
 
-The file has keys for five boards. A project that lists fewer boards in its
+The file has keys for six boards (board 6 added 2026-11-24 as a relay). A project that lists fewer boards in its
 `network_config.h` must skip the keys for boards it doesn't know, rather
 than refusing to start. The projects below do this, and log `Pair keys
-compiled in: 1 in use, 3 for boards not listed or without a MAC`. The
+compiled in: 1 in use, 4 for boards not listed or without a MAC`. The
 unused keys are still compiled into the image.
 
 ## Commands
 
 ```sh
 python3 generate_keys.py           # add missing pairs; keeps every existing key
-python3 generate_keys.py --check   # all 10 pairs present, both sides match, all distinct
+python3 generate_keys.py --check --boards 6   # all 15 pairs present, both sides match, all distinct
 python3 generate_keys.py --boards 8   # more boards; existing keys kept
 python3 generate_keys.py --force   # new keys for everything: rebuild and reflash EVERY board of EVERY project
 python3 find_keys.py ../*/.pio/build/*/firmware.bin

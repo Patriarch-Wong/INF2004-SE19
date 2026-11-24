@@ -13,10 +13,17 @@ int main()
             "configured board IDs parse without changing their value");
     }
     uint8_t peer = 0;
+    char past_last[16];
+    std::snprintf(past_last, sizeof(past_last), "%u",
+        static_cast<unsigned>(network_config::device_count + 1));
+    peer = 99;
+    check(!command_parser::board_id(past_last, peer) && peer == 99,
+        "the ID after the last configured board is refused");
+    peer = 0;
     check(command_parser::board_id("\t002\r", peer) && peer == 2,
         "whitespace and leading zeros accepted");
     const char *invalid[] = {
-        "", " ", "0", "6", "255", "256", "258", "514",
+        "", " ", "0", "255", "256", "258", "514",
         "4294967298", "18446744073709551618",
         "9999999999999999999999999999999999999999999999999999",
         "-254", "-4294967294", "+2", "2x", "2 3", "2.0", "0x2"

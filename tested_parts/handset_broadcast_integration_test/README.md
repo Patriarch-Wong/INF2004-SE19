@@ -14,7 +14,10 @@ in range gets it at once. No connection, nothing to accept, no router.
 | On the radio | one frame to that board | **one frame to everyone**: ESP-NOW to `FF:FF:FF:FF:FF:FF`; LoRa frames are heard by all anyway |
 | Encrypted | pair session key | **the sender's broadcast key** (below) |
 
-**Status: all five environments build. Not yet tested on hardware.**
+**Status: all five environments build. Its own hardware test steps have
+not been run. Boards 1–4 ran this build on 2026-11-06 for the
+[radio_sniffer](../radio_sniffer/README.md) capture, where sessions,
+presence pings and broadcast voice all opened with no bad tags.**
 `tools/broadcast_test.py` is ready for the first run (step 7).
 
 ## How broadcast works

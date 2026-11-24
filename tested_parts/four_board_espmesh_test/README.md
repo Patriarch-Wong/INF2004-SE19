@@ -9,6 +9,8 @@ Board 4 listens to both hops and sends a capture to your computer.
 
 Boards 1 and 2 can both send messages. Board 3 is the fixed mesh root. Each handset joins it directly, so a mesh Hello from one handset to the other goes through Board 3. The sniffer listens separately and needs no mesh keys. [ESP-WIFI-MESH routing guide](https://docs.espressif.com/projects/esp-idf/en/v4.4.7/esp32s3/api-guides/esp-wifi-mesh.html#routing-tables)
 
+**Status: all four environments build. Not yet run as a mesh on hardware: the relay through Board 3 and the sniffer capture (steps 2 onwards) are still to do.**
+
 ## 1. Build and upload the four boards
 
 This is one PlatformIO project, converted from the Arduino kit

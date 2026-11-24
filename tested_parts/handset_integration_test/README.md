@@ -28,8 +28,9 @@ phone call with a walkie-talkie inside:
 
 The handsets are **pre-paired for up to five boards**. The shared key file
 [`../shared_keys/e2e_keys.h`](../shared_keys/README.md) holds one pair key
-for every pair of boards (10 keys).
-Each board's firmware compiles in only the 4 it shares with the others, so
+for every pair of boards (15 keys since board 6 was added on 2026-11-24;
+this project lists five boards and uses the 10 between them).
+Each board's firmware compiles in only the keys it shares with the others, so
 there is no pairing step. Boards 1 and 2 keep the network key and 1–2 pair
 key of `mic_speaker_e2e_test`. Boards 1–3 have MACs; slots 4 and 5 are
 ready but wait for MACs (see [Adding a board](#adding-a-board)). Boards 1
@@ -37,7 +38,9 @@ and 2 have the LCD, D-pad, mic and speaker wired. LoRa comes next and is
 not in this build.
 
 Status: **all five environments build, and the host tests pass (including
-the connection and key-file checks). Not yet run on hardware.**
+the connection and key-file checks). Run on hardware on boards 1 and 2 on
+2026-11-03, driven over serial; see [Limits](#limits) and
+[evidence](evidence/hardware_2026-11-03.md).**
 
 ## Wiring
 
@@ -421,7 +424,7 @@ tracked in [ISSUES.md](ISSUES.md).
   connection timings, tones.
 - `include/network_config.h`: five board slots: IDs, MACs (zero = not
   provisioned) and names.
-- `../shared_keys/`: the network key and 10 pair keys, shared with other
+- `../shared_keys/`: the network key and the pair keys, shared with other
   projects, plus the generator and key finder.
 - `tests/call_test.cpp`: connection host tests. The others are as in
   `mic_speaker_e2e_test2`.

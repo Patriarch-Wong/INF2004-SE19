@@ -1,6 +1,8 @@
 # ESP32 tests
 
 Standalone ESP32-S3 N16R8 experiments, each in its own PlatformIO project.
+The firmware these lead to is [`main/`](../main/README.md), a copy of
+`handset_espnow_flood_integration_test`; start there to build a handset.
 Results and radio conditions are kept in one place, the
 [root README's test summary](../README.md#test-summary); each project's own
 README has the full procedure and measurements.
@@ -8,8 +10,8 @@ README has the full procedure and measurements.
 | Project | Description |
 | --- | --- |
 | [button_test](button_test/) | Debounced tactile button and LED |
-| [dpad_lcd_test](dpad_lcd_test/) | Six debounced buttons (D-pad, confirm, cancel) shown on the ST7789 LCD |
-| [dpad_menu_test](dpad_menu_test/) | Menu navigation on the ST7789 LCD with the six `dpad_lcd_test` buttons |
+| [dpad_test](dpad_test/) | Six debounced buttons (D-pad, confirm, cancel) shown on the ST7789 LCD |
+| [dpad_menu_test](dpad_menu_test/) | Menu navigation on the ST7789 LCD with the six `dpad_test` buttons |
 | [button_lcd_test](button_lcd_test/) | ST7789 LCD video player from SD, with wireless A/V and streaming variants |
 | [codec_test](codec_test/) | Opus encode/store/decode round trip |
 | [codec_sdtest](codec_sdtest/) | Opus and onboard SDMMC with reusable C++ APIs |
@@ -35,7 +37,7 @@ README has the full procedure and measurements.
 | [four_board_espmesh_test](four_board_espmesh_test/) | Four-board ESP-MESH relay demo from the Arduino kit: handsets 1 and 2 join board 3, the fixed root, so their encrypted Hello crosses two WPA2 hops; a keyless sniffer board captures both hops to a PCAP and host tools check the relay path and the AES-GCM tag |
 | [espmesh_allnodes_test](espmesh_allnodes_test/) | ESP-MESH(ALLNODES) kit: `handset_espnow_mesh_integration_test` with the routed relay reworked so a call uses one confirmed path in both directions (1 > 3 > 2 and back 2 > 3 > 1), every board able to relay over ESP-NOW; plus a keyless sniffer environment that follows each relayed frame hop by hop on its serial monitor |
 | [handset_espnow_flood_integration_test](handset_espnow_flood_integration_test/) | `handset_broadcast_integration_test` cut down to four things on the menu (ESP-NOW flood mesh, LoRa, Broadcast, LoRa broadcast) plus Status and Tools; ESP-MESH and the routed relay are not started; flood relays wait a random 0–20 ms and tell copies by the hop tag instead of the unauthenticated envelope ID |
-| [shared_keys](shared_keys/) | One key file (network key + pair keys for boards 1–5) shared by `handset_integration_test` and both `mic_speaker_e2e_test` projects; generator and key finder |
+| [shared_keys](shared_keys/) | One key file (network key + pair keys for boards 1–6) shared by the handset builds and both `mic_speaker_e2e_test` projects; generator and key finder |
 | [mictospeaker_test](mictospeaker_test/) | I2S microphone to ESP-NOW ADPCM to PDM speaker |
 | [lcd_lora_test](lcd_lora_test/) | ST7789 LCD and Core1121 LoRa on separate SPI buses, no menu: hello/bye texts both ways at 915 MHz, radio state, counts and RSSI on screen |
 | [lora_test](lora_test/) | Core1121 868 MHz LoRa broadcast send and receive |

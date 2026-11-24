@@ -7,7 +7,7 @@
 #   sh tests/run_build_tests.sh board1       just these environments
 set -u
 cd "$(dirname "$0")/.."
-envs="${*:-board1 board2 board3 board4 board5}"
+envs="${*:-board1 board2 board3 board4 board5 board6}"
 pio="$(command -v pio || echo "$HOME/.platformio/penv/bin/pio")"
 logs="$(mktemp -d)"
 trap 'rm -rf "$logs"' EXIT

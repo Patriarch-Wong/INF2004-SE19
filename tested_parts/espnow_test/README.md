@@ -22,6 +22,8 @@ unencrypted; the MAC whitelist is a filter, not authentication.
 | 1 | `E0:72:A1:D9:A4:94` |
 | 2 | `E0:72:A1:D8:E2:10` |
 
+These two boards are board 6 and board 1 of [`main/`](../../main/README.md#boards).
+
 Commands below use `BOARD1_PORT` and `BOARD2_PORT`. Run `pio device list`
 to find them. To identify a physical board, unplug the other one and list
 the ports again.

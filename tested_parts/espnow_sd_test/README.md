@@ -10,6 +10,8 @@ Both boards run the same firmware; their station MACs determine their roles.
 | 1 | RAM sender | E0:72:A1:D9:A4:94 |
 | 2 | SD receiver | E0:72:A1:D8:E2:10 |
 
+These two boards are board 6 and board 1 of [`main/`](../../main/README.md#boards).
+
 `include/espnow_config.h` selects channel 1, both allowed MACs, and sender
 index 0. SD uses CMD 38, CLK 39, D0 40, 1-bit SDMMC at 20 MHz. Settings are
 in `include/app_config.h`. The receiver needs a FAT-formatted card; the
