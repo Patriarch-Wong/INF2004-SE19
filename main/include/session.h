@@ -6,7 +6,7 @@
 #include "replay_window.h"
 #include "secure_message.h"
 
-// Session keys between two paired handsets. The pair key from NVS never
+// Session keys between two paired handsets. The compiled-in pair key never
 // encrypts messages itself. After every boot, the two handsets run a short
 // handshake. Each side contributes a fresh random nonce, and the session key
 // is derived from the pair key and both nonces. Text and voice are sealed
@@ -28,11 +28,39 @@
 // a valid confirm, or until a data frame opens under the new key, so a
 // replayed hello cannot disturb a working session. If both sides send hello
 // at once, the lower device ID stays initiator.
+//
+// A hello proves nothing by itself: its hop tag never expires, so anyone can
+// record one and send it again. The responder therefore keeps the last
+// pending_slots hellos it answered, each with its own key, not only the
+// newest. A replayed hello arriving between the real reply and its confirm
+// takes another slot and the real confirm still matches. Pushing the real
+// handshake out takes pending_slots different recorded hellos inside that
+// gap; the two boards then disagree on the key until the receiving side's
+// frames fail and it starts a new handshake (the caller's resync).
+//
+// Two boards hold one session for each way they reach each other (direct
+// ESP-NOW, the flood mesh, LoRa, ...), all from the same pair key. The way
+// is mixed into the handshake's tag key and into the session key, so a
+// handshake belongs to one way: a hello picked up over LoRa and passed on
+// over ESP-NOW gets a reply whose tag the LoRa side refuses.
 namespace session
 {
 constexpr size_t nonce_size = 16;
 constexpr size_t tag_size = 16;
 constexpr size_t key_size = secure_message::key_size;
+// Hellos the responder has answered and still waits on.
+constexpr size_t pending_slots = 4;
+
+// What carries a session. The values are part of the key derivation: never
+// renumber them, and both boards must use the same one.
+enum class transport : uint8_t
+{
+    espnow = 1,  // Direct ESP-NOW.
+    mesh = 2,    // ESP-MESH.
+    flood = 3,   // ESP-NOW flood mesh.
+    routed = 4,  // ESP-NOW routed relay.
+    lora = 5,
+};
 
 enum class step : uint8_t
 {
@@ -72,8 +100,10 @@ public:
     link(const link &) = delete;
     link &operator=(const link &) = delete;
 
-    // Loads the pair key shared with peer_id and drops any session.
-    bool begin(uint8_t own_id, uint8_t peer_id, const uint8_t *pair_key);
+    // Loads the pair key shared with peer_id, for sessions carried by
+    // `over`, and drops any session.
+    bool begin(uint8_t own_id, uint8_t peer_id, const uint8_t *pair_key,
+        transport over);
 
     // Wipes the pair key and every session (unpair).
     void forget();
@@ -112,7 +142,7 @@ public:
         size_t frame_capacity, size_t *frame_size, uint32_t *counter);
 
     // Opens a data frame from the peer: end-to-end tag under the current
-    // session (or the pending one, which it then promotes), destination
+    // session (or a pending one, which it then promotes), destination
     // check, then the replay window.
     open_result open(const uint8_t *network_key, const uint8_t *frame,
         size_t frame_size, secure_message::header *fields, uint8_t *payload,
@@ -156,6 +186,10 @@ private:
         uint8_t responder_id, const keys &values,
         control_frame::message *content) const;
     void install(const keys &values);
+    // The pending session answering this initiator nonce, or null.
+    keys *find_pending(const uint8_t *initiator_nonce);
+    bool any_pending() const;
+    void clear_pending();
     open_result finish(const secure_message::header &fields);
     static void clear(keys *values);
 
@@ -167,13 +201,17 @@ private:
     bool keyed = false;
     uint8_t own = 0;
     uint8_t peer = 0;
+    uint8_t carrier = 0;  // The transport, as mixed into the keys.
     uint8_t pair[key_size] = {};
     uint8_t auth[key_size] = {};
     uint32_t pair_fingerprint = 0;
     keys current;
     uint32_t next_counter = 1;
     replay_window window;
-    keys pending;  // Responder: derived, not yet confirmed by the peer.
+    // Responder: derived, not yet confirmed by the peer. The oldest is
+    // replaced first.
+    keys pending[pending_slots];
+    size_t pending_next = 0;
     bool hello_active = false;
     uint8_t hello_nonce[nonce_size] = {};
 };

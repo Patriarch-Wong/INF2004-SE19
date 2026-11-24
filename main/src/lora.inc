@@ -926,7 +926,8 @@ void setup_lora_keys()
     {
         if (valid_peer(entry.peer))
         {
-            lora_peers[entry.peer].link.begin(own_id, entry.peer, entry.key);
+            lora_peers[entry.peer].link.begin(own_id, entry.peer, entry.key,
+                session::transport::lora);
         }
     }
 }

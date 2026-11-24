@@ -2,8 +2,11 @@
 
 A copy of [tested_parts/shared_keys](../../tested_parts/shared_keys/), made
 on 2026-11-15, so `main/` builds without reaching into `tested_parts/`.
-The keys are the same, so a board on `main/` firmware and a board on any
-`tested_parts/` handset build can still talk.
+The keys are the same. That no longer means the boards can talk: since
+2026-11-24 `main/` binds each session to its transport
+([Security](../README.md#security)), so a board on `main/` firmware makes
+sessions only with other `main/` boards, not with a `tested_parts/`
+handset build.
 
 **Keep the two copies the same.** If you add boards or replace keys here,
 copy `e2e_keys.h` to `tested_parts/shared_keys/` too (or the other way
@@ -15,7 +18,9 @@ The rest of this file is the original README. Its paths are written for
 
 One key file for every project, so a board has the same keys whichever
 project it runs. Boards flashed from different projects stay compatible,
-and adding a board needs no key step.
+and adding a board needs no key step. The exception is `main/`: since
+2026-11-24 its sessions are bound to their transport, so it holds sessions
+only with other `main/` boards, though the keys are the same.
 
 | File | What |
 | --- | --- |
@@ -28,10 +33,10 @@ and adding a board needs no key step.
 | Key | Held by | Purpose |
 | --- | --- | --- |
 | Network | every board | HMAC hop tag on every frame |
-| Pair `a-b` (1-2, 1-3, … 4-5) | boards a and b only | Session handshake between those two boards; the session key seals voice and connection messages |
+| Pair `a-b` (1-2, 1-3, … 5-6) | boards a and b only | Session handshake between those two boards; the session key seals voice and connection messages |
 
 Each board's build compiles only the block for its `E2E_DEVICE_ID`, which
-holds its own 4 pair keys. Two kinds of build get the network key only:
+holds its own 5 pair keys. Two kinds of build get the network key only:
 
 - relay builds (`-DE2E_RELAY`)
 - projects that make pair keys by pairing (`-DE2E_NETWORK_KEY_ONLY`)
@@ -92,11 +97,13 @@ unless noted: `e2e_security_test`, `e2e_relay_test`, `e2e_pairing_test`,
 the CCMP and LoRa keys of `espnow_encrypt_test` and `lora_encrypt_test`.
 Those projects keep their own keys for now.
 
-**Broadcast is not encrypted** (the user's decision, 2026-11-03), so there is
-no group key here. One-to-many voice works like `opus_broadcast_test`: in
-the clear, and anyone on the channel can hear it. Unicast between two
-boards stays end-to-end encrypted with the pair keys. `e2e_broadcast_test`
-(a shared group key) remains as a finished experiment; its key is not
+**There is no broadcast key in this file.** `opus_broadcast_test`
+broadcasts in the clear, and anyone on the channel can hear it. The handset
+builds from `handset_broadcast_integration_test` on, and `main/`, encrypt
+their broadcasts without a key here: each board makes a broadcast key every
+boot and sends it to each paired board inside their pair session. So a
+broadcast is as private as the pair keys in this file. `e2e_broadcast_test`
+(a compiled-in group key) remains as a finished experiment; its key is not
 carried forward.
 
 ## Security
@@ -109,5 +116,5 @@ asked for the keys to be committed. For a private deployment:
 2. Keep the file out of git.
 3. Rebuild and reflash every board of every project.
 
-A lost board exposes its own 4 pairs and the shared network key, not the
+A lost board exposes its own 5 pairs and the shared network key, not the
 other pairs.

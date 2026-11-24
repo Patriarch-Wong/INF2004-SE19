@@ -819,6 +819,12 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
         relay_reject(net, frame, "bad envelope");
         return true;
     }
+    if (!relay_frame::hops_ok(head, app_config::relay_max_hops))
+    {
+        // The TTL isn't signed: someone raised it to be relayed further.
+        relay_reject(net, frame, "hop limit raised");
+        return true;
+    }
     secure_message::header fields = {};
     const status verified = secure_message::verify_hop(e2e_keys::network,
         head.inner, head.inner_size, &fields);
@@ -1081,9 +1087,9 @@ void setup_relay_keys()
         if (valid_peer(entry.peer))
         {
             flood_net.peers[entry.peer].link.begin(own_id, entry.peer,
-                entry.key);
+                entry.key, session::transport::flood);
             routed_net.peers[entry.peer].link.begin(own_id, entry.peer,
-                entry.key);
+                entry.key, session::transport::routed);
         }
     }
 }

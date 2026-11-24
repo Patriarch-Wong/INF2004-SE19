@@ -460,7 +460,8 @@ bool start()
             return fail("All-zero pair key: run python3 "
                         "shared_keys/generate_keys.py");
         }
-        if (peers[entry.peer].link.begin(own_id, entry.peer, entry.key))
+        if (peers[entry.peer].link.begin(own_id, entry.peer, entry.key,
+                session::transport::espnow))
         {
             ++loaded;
         }

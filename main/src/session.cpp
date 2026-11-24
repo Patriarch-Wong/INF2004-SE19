@@ -62,18 +62,23 @@ link::~link()
     forget();
 }
 
-bool link::begin(uint8_t own_id, uint8_t peer_id, const uint8_t *pair_key)
+bool link::begin(uint8_t own_id, uint8_t peer_id, const uint8_t *pair_key,
+    transport over)
 {
     forget();
-    if (!pair_key || own_id == 0 || peer_id == 0 || own_id == peer_id)
+    if (!pair_key || own_id == 0 || peer_id == 0 || own_id == peer_id ||
+        static_cast<uint8_t>(over) == 0)
     {
         return false;
     }
     own = own_id;
     peer = peer_id;
+    carrier = static_cast<uint8_t>(over);
     memcpy(pair, pair_key, sizeof(pair));
+    // The tag key is for one transport: a reply or confirm made for
+    // another fails its tag here.
     kdf::input info;
-    info.add("SE19 session auth");
+    info.add("SE19 session auth").add(carrier);
     if (!kdf::hkdf(nullptr, 0, pair, sizeof(pair), info, auth,
             sizeof(auth)) ||
         !kdf::fingerprint(pair, sizeof(pair), "SE19 pair id",
@@ -92,13 +97,14 @@ void link::forget()
     kdf::wipe(auth, sizeof(auth));
     kdf::wipe(hello_nonce, sizeof(hello_nonce));
     clear(&current);
-    clear(&pending);
+    clear_pending();
     window = replay_window();
     next_counter = 1;
     hello_active = false;
     keyed = false;
     own = 0;
     peer = 0;
+    carrier = 0;
     pair_fingerprint = 0;
 }
 
@@ -155,20 +161,24 @@ event link::on_hello(const uint8_t *body, const uint8_t *nonce,
         return event::ignored;  // Both sent hello; ours stands.
     }
     // A repeated hello gets the same reply, so the initiator cannot end up
-    // with one responder nonce while this side keeps another.
-    if (!pending.valid ||
-        !kdf::equal(pending.initiator_nonce, body, nonce_size))
+    // with one responder nonce while this side keeps another. A different
+    // hello takes the oldest slot and leaves the others waiting: it may be
+    // a replay, and must not push out the handshake in progress.
+    keys *slot = find_pending(body);
+    if (!slot)
     {
         keys derived;
         if (!derive(peer, own, body, nonce, &derived))
         {
             return event::ignored;
         }
-        pending = derived;
+        slot = &pending[pending_next];
+        pending_next = (pending_next + 1) % pending_slots;
+        *slot = derived;
         clear(&derived);
     }
     hello_active = false;
-    return exchange_message(step::reply, "SE19 reply", peer, own, pending,
+    return exchange_message(step::reply, "SE19 reply", peer, own, *slot,
         response) ? event::replied : event::ignored;
 }
 
@@ -198,7 +208,7 @@ event link::on_reply(const uint8_t *body, control_frame::message *response)
     }
     install(derived);
     clear(&derived);
-    clear(&pending);
+    clear_pending();
     hello_active = false;
     kdf::wipe(hello_nonce, sizeof(hello_nonce));
     return event::established;
@@ -206,16 +216,16 @@ event link::on_reply(const uint8_t *body, control_frame::message *response)
 
 event link::on_confirm(const uint8_t *body)
 {
-    if (!pending.valid ||
-        !kdf::equal(body, pending.initiator_nonce, nonce_size) ||
-        !kdf::equal(body + responder_nonce_offset, pending.responder_nonce,
+    const keys *slot = find_pending(body);
+    if (!slot ||
+        !kdf::equal(body + responder_nonce_offset, slot->responder_nonce,
             nonce_size))
     {
         return event::ignored;
     }
     uint8_t expected[tag_size];
-    if (!make_tag("SE19 confirm", peer, own, pending.initiator_nonce,
-            pending.responder_nonce, expected))
+    if (!make_tag("SE19 confirm", peer, own, slot->initiator_nonce,
+            slot->responder_nonce, expected))
     {
         return event::ignored;
     }
@@ -223,8 +233,8 @@ event link::on_confirm(const uint8_t *body)
     {
         return event::bad_tag;
     }
-    install(pending);
-    clear(&pending);
+    install(*slot);
+    clear_pending();  // The other hellos were not the peer's latest.
     hello_active = false;
     return event::confirmed;
 }
@@ -260,7 +270,7 @@ open_result link::open(const uint8_t *network_key, const uint8_t *frame,
     size_t frame_size, secure_message::header *fields, uint8_t *payload,
     size_t payload_capacity, size_t *payload_size)
 {
-    if (!current.valid && !pending.valid)
+    if (!current.valid && !any_pending())
     {
         return open_result::no_session;
     }
@@ -272,16 +282,20 @@ open_result link::open(const uint8_t *network_key, const uint8_t *frame,
             frame_size, &decoded, payload, payload_capacity, payload_size);
     }
     bool promoted = false;
-    if (result == status::bad_tag && pending.valid)
+    for (size_t i = 0; result == status::bad_tag && i < pending_slots; ++i)
     {
-        result = secure_message::open(pending.key, network_key, frame,
+        if (!pending[i].valid)
+        {
+            continue;
+        }
+        result = secure_message::open(pending[i].key, network_key, frame,
             frame_size, &decoded, payload, payload_capacity, payload_size);
-        // Only the peer holds the pending key, so this frame confirms it.
+        // Only the peer holds a pending key, so this frame confirms it.
         if (result == status::ok && decoded.source == peer &&
             decoded.destination == own)
         {
-            install(pending);
-            clear(&pending);
+            install(pending[i]);
+            clear_pending();
             hello_active = false;
             promoted = true;
         }
@@ -314,7 +328,8 @@ bool link::derive(uint8_t initiator_id, uint8_t responder_id,
     memcpy(salt, initiator_nonce, nonce_size);
     memcpy(salt + nonce_size, responder_nonce, nonce_size);
     kdf::input info;
-    info.add("SE19 session key").add(initiator_id).add(responder_id);
+    info.add("SE19 session key").add(initiator_id).add(responder_id)
+        .add(carrier);
     if (!kdf::hkdf(salt, sizeof(salt), pair, sizeof(pair), info, output->key,
             sizeof(output->key)) ||
         !kdf::fingerprint(output->key, sizeof(output->key), "SE19 session id",
@@ -371,6 +386,40 @@ open_result link::finish(const secure_message::header &fields)
     }
     window.accept(fields.counter);
     return open_result::accepted;
+}
+
+session::link::keys *link::find_pending(const uint8_t *initiator_nonce)
+{
+    for (keys &slot : pending)
+    {
+        if (slot.valid &&
+            kdf::equal(slot.initiator_nonce, initiator_nonce, nonce_size))
+        {
+            return &slot;
+        }
+    }
+    return nullptr;
+}
+
+bool link::any_pending() const
+{
+    for (const keys &slot : pending)
+    {
+        if (slot.valid)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void link::clear_pending()
+{
+    for (keys &slot : pending)
+    {
+        clear(&slot);
+    }
+    pending_next = 0;
 }
 
 void link::clear(keys *values)

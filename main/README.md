@@ -231,7 +231,7 @@ None of these needs a board; nothing is uploaded.
 ```sh
 sh tests/run_all_tests.sh        # all of them, about 2 minutes
 sh tests/run_build_tests.sh      # T1-T4; add board1 ... to build fewer
-sh tests/run_host_tests.sh       # T7
+sh tests/run_host_tests.sh       # T7, T9, T10
 sh tests/run_handset_tests.sh    # T5, T6, T8
 ```
 
@@ -243,8 +243,10 @@ sh tests/run_handset_tests.sh    # T5, T6, T8
 | T4 | The PC and test scripts are valid | `tools/*.py` compile, `tests/*.sh` parse |
 | T5 | The menu is cut down (`tests/cutdown_test.py`, reads the source) | Menu rows are ESP-NOW flood, LoRa, Broadcast, LoRa broadcast, Status, Tools; Tools has the rate, Mute flood, Mute LoRa; ESP-MESH and the routed relay are not started |
 | T6 | The settings are sane (`tests/config_test.cpp`) | Board IDs in order, no MAC twice, names fit the screen, the largest voice frame fits a flood envelope |
-| T7 | Flood duplicate filter (`tests/relay_frame_test.cpp`) | A copy is dropped; a frame replayed under the next ID doesn't block the real one |
+| T7 | Flood duplicate filter and hop limit (`tests/relay_frame_test.cpp`) | A copy is dropped; a frame replayed under the next ID doesn't block the real one; a hop count raised on the way is refused |
 | T8 | The inherited host suites: crypto, sessions, connections, LoRa texts, voice link, audio DSP, key file | Each prints `All ... passed` |
+| T9 | A hello replayed during a handshake (`tests/session_test.cpp`) | One replayed between the reply and the confirm doesn't stop the session, with the confirm or without it; three don't either; four do, and a new handshake recovers |
+| T10 | A session is bound to its transport (`tests/session_test.cpp`) | A reply or confirm made for LoRa is refused on the flood mesh and the other way round; the same pair key and nonces give a different session key on each |
 
 Last run 2026-11-24, with board 6 added: all pass (21 build checks, every
 host suite).
@@ -267,6 +269,57 @@ this board didn't pass on because it had a connection of its own.
 Broadcast, LoRa and the log lines are as in
 [handset_broadcast_integration_test](../tested_parts/handset_broadcast_integration_test/README.md#serial-commands-optional).
 
+## Security
+
+What protects a message, and what does not. The keys are demo keys in a
+public repository (see [Limits](#limits)), so read this as what the design
+does for a team that keeps its key file private.
+
+| Protection | How |
+| --- | --- |
+| Only the two boards of a connection read it | AES-128-GCM under a session key. Each pair of boards has its own compiled-in pair key; no third board, relays included, holds it |
+| A new key every boot | The session key is HKDF-SHA256 of the pair key and two fresh 16-byte random nonces, one from each board. Each way between two boards (direct ESP-NOW, flood, LoRa) has its own session |
+| Changed or forged messages are refused | 16-byte GCM tag over the message and its header (type, source, destination, counter) |
+| Replays are refused | The counter starts at 1 in each session and is never reused; the receiver keeps a 64-counter window, moved only by messages whose tag passed. A recording from an earlier session fails the tag |
+| Only boards of the network are relayed | Every frame ends in a hop tag, HMAC-SHA256 under the network key, which a relay checks before passing it on. A relay can't open the message |
+| Only the paired board can start a session | The handshake's reply and confirm carry HMAC tags under a key derived from the pair key, bound to both board IDs and both nonces. The responder keeps its working session until the new one is confirmed |
+| A session belongs to one way between two boards | The way (direct ESP-NOW, flood, LoRa) is mixed into the handshake's tag key and the session key. A handshake picked up on one radio and passed on over the other fails its tag, and the same nonces give a different key on each |
+| Broadcasts | Sealed the same way under a key the sender makes each boot and hands to each paired board inside their session |
+| The primitives are the real ones | At boot the firmware checks AES-GCM, HMAC-SHA256, HKDF and X25519 against published test vectors and stops if one fails. Random numbers are taken after Wi-Fi starts, when the hardware generator has its noise source |
+
+Someone with a radio and no keys can still:
+
+- **See who talks to whom, when and how much.** The header and the frame
+  length are in the clear. The content is not.
+- **Jam the channel.** Nothing here prevents that, and the points below
+  cost an attacker no less effort than jamming does.
+- **Make idle boards relay an old frame again.** A hop tag never expires
+  and the duplicate filter remembers 5 s, so a recorded frame sent again
+  later is passed on once more by each idle board it reaches, within its
+  4 transmissions. The destination refuses it as a replay. The cost is
+  airtime.
+- **Delay a handshake.** A hello proves nothing by itself, so an old one
+  can be sent again. It can't disturb a working session. A board keeps the
+  last four hellos it answered (`pending_slots`), so stalling a handshake
+  takes four different recorded hellos sent between the real reply and
+  its confirm. The two boards then start again after 5 s of failed frames
+  (15 s over LoRa).
+
+Accepted for a test project, and not defended:
+
+- **No forward secrecy.** Whoever holds a pair key can work out every
+  session key made from it, for traffic recorded before or after.
+- **Keys sit in plain flash.** No flash encryption or secure boot: a lost
+  board gives up the network key and its own five pair keys, not the
+  other pairs.
+- **A broadcast key is shared.** Every board given a sender's broadcast
+  key reads its broadcasts and could send one in its name.
+- **The flood envelope is not signed.** Its hop count and path change at
+  every relay, so anyone can rewrite them. That can cut short how far a
+  frame travels and change what the route line shows. It can't send a
+  frame further: a relay refuses a hop count higher than the path allows
+  (`hops_ok()`), so 4 transmissions stays the limit.
+
 ## Limits
 
 - **Not run on hardware yet** as a flood mesh; the results above are builds
@@ -281,6 +334,11 @@ Broadcast, LoRa and the log lines are as in
 - **LoRa carries text only**, "Hello" and "Bye"; voice is ESP-NOW only.
 - **Airtime.** Every board that hears a flood frame sends it once more, so
   more boards in range means more traffic on the channel.
+- **Every board must run this build.** Its sessions are bound to their
+  transport ([Security](#security)), so a board on this firmware and one
+  on an earlier build, or on a `tested_parts` handset project, refuse each
+  other's handshake (`bad handshake tag`) and show each other as waiting.
+  Flash all six together.
 - **The keys are demo keys, committed on purpose** (`shared_keys/`). Anyone
   with this repository can read the traffic; make new keys with
   `shared_keys/generate_keys.py --force` before any real use.
@@ -298,6 +356,18 @@ Broadcast, LoRa and the log lines are as in
   duplicate filter (it already drops its own echoes by their source).
 - `include/relay_frame.h`, `src/relay_frame.cpp`: `frame_key()`; the
   duplicate filter holds 32-bit keys.
+- `include/session.h`, `src/session.cpp`: a board keeps the last four
+  hellos it answered, not only the newest, so one replayed hello can't
+  push out a handshake in progress ([Security](#security)).
+- `include/session.h`, `src/session.cpp` and where each transport loads
+  its keys (`src/main.cpp`, `src/relay.inc`, `src/lora.inc`,
+  `src/mesh.inc`): a session is bound to its transport
+  (`session::transport`). The frames look the same, but the keys derived
+  from a pair key are new, so **this build makes no session with the
+  earlier builds**, the `tested_parts` handset projects included.
+- `include/relay_frame.h`, `src/relay_frame.cpp`, `src/relay.inc`:
+  `hops_ok()`. The hop count isn't signed, so a relay now refuses one
+  raised on the way.
 - `include/app_config.h`: `relay_jitter_ms`, `relay_queue_depth`, the
   project name.
 - `include/network_config.h`: the board table of

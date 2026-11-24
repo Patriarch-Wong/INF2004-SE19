@@ -73,6 +73,39 @@ void test_envelope()
     check(!parse(out, fixed_size, &parsed), "empty envelope refused");
 }
 
+// The TTL isn't signed. A relay refuses one higher than the path allows, so
+// a frame is never sent more than max_hops times.
+void test_hop_limit()
+{
+    constexpr uint8_t max_hops = 4;
+    envelope head = {};
+    head.marker = marker_flood;
+    head.ttl = max_hops;
+    head.path_length = 1;
+    head.path[0] = 1;
+    check(hops_ok(head, max_hops), "a frame from its origin is within limit");
+    // Relayed along the way, as relay_forward() does.
+    unsigned transmissions = 1;
+    while (head.ttl > 1 && head.path_length < max_path)
+    {
+        --head.ttl;
+        head.path[head.path_length] = static_cast<uint8_t>(
+            head.path_length + 1);
+        ++head.path_length;
+        ++transmissions;
+        check(hops_ok(head, max_hops), "each relayed copy is within limit");
+    }
+    check(transmissions == max_hops, "a frame is sent max_hops times");
+    head.ttl = 2;
+    check(!hops_ok(head, max_hops),
+        "a TTL raised at the last hop is refused");
+    head.ttl = 255;
+    head.path_length = 1;
+    check(!hops_ok(head, max_hops), "a TTL raised at the origin is refused");
+    head.ttl = max_hops - 1;
+    check(hops_ok(head, max_hops), "a lowered TTL only shortens the reach");
+}
+
 void test_frame_key()
 {
     const sealed first = seal(1);
@@ -129,6 +162,7 @@ void test_replay_under_next_id()
 int main()
 {
     test_envelope();
+    test_hop_limit();
     test_frame_key();
     test_seen_cache();
     test_replay_under_next_id();

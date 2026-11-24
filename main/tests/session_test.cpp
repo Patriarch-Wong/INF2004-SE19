@@ -14,6 +14,8 @@ const uint8_t network_key[secure_message::key_size] = {0x5A, 0x4B, 0x3C,
     0x69};
 const uint8_t pair_key[session::key_size] = {0x10, 0x21, 0x32, 0x43, 0x54,
     0x65, 0x76, 0x87, 0x98, 0xA9, 0xBA, 0xCB, 0xDC, 0xED, 0xFE, 0x0F};
+// Every test but the transport one runs over the flood mesh.
+const session::transport over = session::transport::flood;
 const char text[] = "HELLO SE19 #1";
 const size_t text_size = sizeof(text) - 1;
 
@@ -79,7 +81,7 @@ void test_handshake_and_data()
 {
     link a;
     link b;
-    check(a.begin(1, 2, pair_key) && b.begin(2, 1, pair_key), "links begin");
+    check(a.begin(1, 2, pair_key, over) && b.begin(2, 1, pair_key, over), "links begin");
     check(a.pair_id() == b.pair_id() && a.pair_id() != 0,
         "same pair key fingerprint");
     check(!a.established() && open_frame(b, frame_buffer()) ==
@@ -110,8 +112,8 @@ void test_receiver_reboot(bool receiver_started_first)
 {
     link a;
     link b;
-    a.begin(1, 2, pair_key);
-    b.begin(2, 1, pair_key);
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
     if (receiver_started_first)
     {
         handshake(b, a);
@@ -129,9 +131,9 @@ void test_receiver_reboot(bool receiver_started_first)
     }
     const uint32_t old_session = b.session_id();
 
-    // Board 2 reboots: same pair key from NVS, nothing else.
+    // Board 2 reboots: same compiled-in pair key, nothing else.
     link rebooted;
-    rebooted.begin(2, 1, pair_key);
+    rebooted.begin(2, 1, pair_key, over);
     check(open_frame(rebooted, recorded) == open_result::no_session,
         "after reboot, before handshake: no session");
     check(handshake(rebooted, a), "rebooted side starts a new session");
@@ -155,8 +157,8 @@ void test_replayed_hello_after_reboot()
 {
     link a;
     link b;
-    a.begin(1, 2, pair_key);
-    b.begin(2, 1, pair_key);
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
     control_frame::message old_hello = {};
     control_frame::message reply = {};
     control_frame::message confirm = {};
@@ -169,7 +171,7 @@ void test_replayed_hello_after_reboot()
         "before reboot: accepted");
 
     link rebooted;
-    rebooted.begin(2, 1, pair_key);
+    rebooted.begin(2, 1, pair_key, over);
     check(rebooted.receive(old_hello, nonces.take(), &reply) ==
             event::replied,
         "rebooted side answers the replayed hello");
@@ -183,14 +185,14 @@ void test_replayed_hello_after_reboot()
 void test_own_nonce_suffices()
 {
     link a;
-    a.begin(1, 2, pair_key);
+    a.begin(1, 2, pair_key, over);
     uint8_t stuck[session::nonce_size];
     std::memset(stuck, 0xA5, sizeof(stuck));
     frame_buffer recorded = {};
     for (int boot = 0; boot < 2; ++boot)
     {
         link b;
-        b.begin(2, 1, pair_key);
+        b.begin(2, 1, pair_key, over);
         control_frame::message hello = {};
         control_frame::message reply = {};
         control_frame::message confirm = {};
@@ -216,8 +218,8 @@ void test_replayed_handshake()
 {
     link a;
     link b;
-    a.begin(1, 2, pair_key);
-    b.begin(2, 1, pair_key);
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
     control_frame::message hello = {};
     control_frame::message reply = {};
     control_frame::message confirm = {};
@@ -241,12 +243,170 @@ void test_replayed_handshake()
     check(b.session_id() == id, "session unchanged by replays");
 }
 
+// A hello recorded from an earlier handshake is replayed between the real
+// reply and its confirm. It takes a pending slot of its own, so the real
+// handshake still completes: by its confirm, or if that is lost by the
+// first data frame.
+void test_replayed_hello_during_handshake(bool confirm_lost)
+{
+    link a;
+    link b;
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
+    control_frame::message old_hello = {};
+    control_frame::message reply = {};
+    control_frame::message confirm = {};
+    control_frame::message stale_reply = {};
+    a.initiate(nonces.take(), &old_hello);
+    b.receive(old_hello, nonces.take(), &reply);
+    a.receive(reply, nonces.take(), &confirm);
+    b.receive(confirm, nonces.take(), &reply);
+    const uint32_t old_session = b.session_id();
+
+    control_frame::message hello = {};
+    a.initiate(nonces.take(), &hello);
+    check(b.receive(hello, nonces.take(), &reply) == event::replied,
+        "real hello answered");
+    check(b.receive(old_hello, nonces.take(), &stale_reply) ==
+            event::replied,
+        "hello replayed during the handshake answered too");
+    check(a.receive(reply, nonces.take(), &confirm) == event::established,
+        "initiator takes the real reply");
+    control_frame::message unused = {};
+    check(a.receive(stale_reply, nonces.take(), &unused) == event::ignored,
+        "reply to the replayed hello ignored");
+    if (confirm_lost)
+    {
+        check(open_frame(b, seal_text(a)) ==
+                open_result::accepted_new_session,
+            "first frame promotes the real session past the replay");
+    }
+    else
+    {
+        check(b.receive(confirm, nonces.take(), &unused) == event::confirmed,
+            "real confirm still matches after the replay");
+    }
+    check(a.session_id() == b.session_id() &&
+            b.session_id() != old_session,
+        "both sides on the new session despite the replay");
+    check(open_frame(b, seal_text(a)) == open_result::accepted &&
+            open_frame(a, seal_text(b)) == open_result::accepted,
+        "traffic flows both ways after the replay");
+    // The replayed hello's slot went when the session was installed.
+    check(b.receive(confirm, nonces.take(), &unused) == event::ignored,
+        "confirm replayed after the session is in use is ignored");
+}
+
+// The limit of the pending slots: one fewer different recorded hello than
+// there are slots leaves the real handshake standing; as many as there are
+// slots push it out. The boards then disagree until a new handshake, which
+// the handset starts when frames keep failing (maybe_resync).
+void test_pending_slots(size_t replays)
+{
+    link a;
+    link b;
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
+    // Hellos a sent earlier, recorded: each has its own nonce.
+    control_frame::message recorded[session::pending_slots] = {};
+    for (size_t i = 0; i < replays; ++i)
+    {
+        a.initiate(nonces.take(), &recorded[i]);
+    }
+    control_frame::message hello = {};
+    control_frame::message reply = {};
+    control_frame::message confirm = {};
+    control_frame::message unused = {};
+    a.initiate(nonces.take(), &hello);
+    b.receive(hello, nonces.take(), &reply);
+    for (size_t i = 0; i < replays; ++i)
+    {
+        check(b.receive(recorded[i], nonces.take(), &unused) ==
+                event::replied,
+            "each replayed hello is answered");
+    }
+    check(a.receive(reply, nonces.take(), &confirm) == event::established,
+        "initiator established");
+    if (replays < session::pending_slots)
+    {
+        check(b.receive(confirm, nonces.take(), &unused) ==
+                event::confirmed &&
+                a.session_id() == b.session_id(),
+            "real handshake survives fewer replays than slots");
+        return;
+    }
+    check(b.receive(confirm, nonces.take(), &unused) == event::ignored &&
+            open_frame(b, seal_text(a)) == open_result::bad_tag,
+        "as many replays as slots push the real handshake out");
+    check(handshake(b, a) &&
+            open_frame(b, seal_text(a)) == open_result::accepted &&
+            open_frame(a, seal_text(b)) == open_result::accepted,
+        "a new handshake recovers");
+}
+
+// The same two boards, the same pair key, but one end's session is for
+// LoRa and the other's for the flood mesh: a handshake carried from one
+// radio to the other. Run with the very same nonces on both transports, the
+// keys still differ, so nothing made for one is taken on the other.
+void test_transport_binding()
+{
+    link a_lora;
+    link b_lora;
+    link b_flood;
+    a_lora.begin(1, 2, pair_key, session::transport::lora);
+    b_lora.begin(2, 1, pair_key, session::transport::lora);
+    b_flood.begin(2, 1, pair_key, session::transport::flood);
+    uint8_t initiator_nonce[session::nonce_size];
+    uint8_t responder_nonce[session::nonce_size];
+    std::memset(initiator_nonce, 0x11, sizeof(initiator_nonce));
+    std::memset(responder_nonce, 0x22, sizeof(responder_nonce));
+
+    // a's LoRa hello reaches b over the flood mesh; the reply is carried
+    // back to a's LoRa session.
+    control_frame::message hello = {};
+    control_frame::message flood_reply = {};
+    control_frame::message confirm = {};
+    a_lora.initiate(initiator_nonce, &hello);
+    check(b_flood.receive(hello, responder_nonce, &flood_reply) ==
+            event::replied,
+        "a hello carries no tag, so the other transport answers it");
+    check(a_lora.receive(flood_reply, nonces.take(), &confirm) ==
+            event::bad_tag &&
+            !a_lora.established(),
+        "a reply made for another transport fails its tag");
+
+    // The handshake completes over LoRa with the same nonces; its confirm
+    // and its frames are then offered to the flood session.
+    control_frame::message lora_reply = {};
+    control_frame::message unused = {};
+    b_lora.receive(hello, responder_nonce, &lora_reply);
+    check(a_lora.receive(lora_reply, nonces.take(), &confirm) ==
+            event::established,
+        "the handshake completes on its own transport");
+    check(b_flood.receive(confirm, nonces.take(), &unused) ==
+            event::bad_tag &&
+            !b_flood.established(),
+        "a confirm made for another transport fails its tag");
+    const frame_buffer sealed = seal_text(a_lora);
+    check(open_frame(b_flood, sealed) == open_result::bad_tag &&
+            !b_flood.established(),
+        "same pair key and nonces, another transport: another session key");
+    check(b_lora.receive(confirm, nonces.take(), &unused) ==
+            event::confirmed &&
+            open_frame(b_lora, sealed) == open_result::accepted,
+        "its own transport takes the confirm and the frame");
+
+    link unset;
+    check(!unset.begin(1, 2, pair_key, static_cast<session::transport>(0)),
+        "a session needs a transport");
+}
+
 void test_lost_confirm()
 {
     link a;
     link b;
-    a.begin(1, 2, pair_key);
-    b.begin(2, 1, pair_key);
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
     control_frame::message hello = {};
     control_frame::message reply = {};
     control_frame::message confirm = {};
@@ -265,8 +425,8 @@ void test_repeated_hello()
 {
     link a;
     link b;
-    a.begin(1, 2, pair_key);
-    b.begin(2, 1, pair_key);
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
     control_frame::message hello = {};
     control_frame::message first = {};
     control_frame::message second = {};
@@ -282,8 +442,8 @@ void test_simultaneous_hello()
 {
     link a;
     link b;
-    a.begin(1, 2, pair_key);
-    b.begin(2, 1, pair_key);
+    a.begin(1, 2, pair_key, over);
+    b.begin(2, 1, pair_key, over);
     control_frame::message hello_a = {};
     control_frame::message hello_b = {};
     control_frame::message response = {};
@@ -310,8 +470,8 @@ void test_wrong_pair_key()
     other_key[0] ^= 1U;
     link impostor;
     link b;
-    impostor.begin(1, 2, other_key);
-    b.begin(2, 1, pair_key);
+    impostor.begin(1, 2, other_key, over);
+    b.begin(2, 1, pair_key, over);
     control_frame::message hello = {};
     control_frame::message reply = {};
     control_frame::message confirm = {};
@@ -326,11 +486,11 @@ void test_wrong_pair_key()
     // nonces as b's pending session: a reply from a forger holding the
     // wrong key, given b's responder nonce.
     link forger;
-    forger.begin(2, 1, other_key);
+    forger.begin(2, 1, other_key, over);
     control_frame::message forged_reply = {};
     forger.receive(hello, reply.body + session::nonce_size, &forged_reply);
     link forged_initiator;
-    forged_initiator.begin(1, 2, other_key);
+    forged_initiator.begin(1, 2, other_key, over);
     control_frame::message unused = {};
     forged_initiator.initiate(hello.body, &unused);
     control_frame::message forged_confirm = {};
@@ -353,6 +513,11 @@ int main()
     test_replayed_handshake();
     test_replayed_hello_after_reboot();
     test_own_nonce_suffices();
+    test_replayed_hello_during_handshake(false);
+    test_replayed_hello_during_handshake(true);
+    test_pending_slots(session::pending_slots - 1);
+    test_pending_slots(session::pending_slots);
+    test_transport_binding();
     test_lost_confirm();
     test_repeated_hello();
     test_simultaneous_hello();

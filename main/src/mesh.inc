@@ -1048,7 +1048,8 @@ void setup_mesh_keys()
     {
         if (valid_peer(entry.peer))
         {
-            mesh_peers[entry.peer].link.begin(own_id, entry.peer, entry.key);
+            mesh_peers[entry.peer].link.begin(own_id, entry.peer, entry.key,
+                session::transport::mesh);
         }
     }
 }

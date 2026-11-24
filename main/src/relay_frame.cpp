@@ -77,6 +77,12 @@ bool parse(const uint8_t *bytes, size_t size, envelope *head)
     return true;
 }
 
+bool hops_ok(const envelope &head, uint8_t max_hops)
+{
+    return static_cast<unsigned>(head.ttl) + head.path_length <=
+        static_cast<unsigned>(max_hops) + 1;
+}
+
 bool build_route(const uint8_t *network_key, const route_message &message,
     uint8_t *out, size_t capacity, size_t *size)
 {

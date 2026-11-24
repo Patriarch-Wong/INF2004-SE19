@@ -22,6 +22,8 @@
 // The envelope isn't authenticated: TTL and path change at every hop. The
 // frame inside carries the network-key hop tag, which a relay checks
 // before forwarding, and the end-to-end seal only the destination opens.
+// Anyone can therefore rewrite the TTL, so a relay checks it against the
+// path (hops_ok()): a frame can't be sent further than the hop limit.
 // Copies of a frame are told by that tag (frame_key()), not by the
 // envelope's ID: anyone could replay an old frame under the ID of one not
 // sent yet, and every board would then drop the real one as a copy.
@@ -77,6 +79,11 @@ bool build(const envelope &head, const uint8_t *inner, size_t inner_size,
 // False for anything malformed: unknown marker, TTL 0, empty or too long
 // path, nothing inside.
 bool parse(const uint8_t *bytes, size_t size, envelope *head);
+// The TTL fits the path: a frame leaves its origin with TTL max_hops and a
+// path of one, and each relay takes one off the TTL and adds itself, so
+// the two always add up to max_hops + 1. False for a TTL higher than that
+// (raised on the way, to make the frame travel further).
+bool hops_ok(const envelope &head, uint8_t max_hops);
 
 enum : uint8_t
 {
