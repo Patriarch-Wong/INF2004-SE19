@@ -23,7 +23,8 @@ phone network. Each handset is an ESP32-S3 with a microphone, speaker,
 | **Encryption** | Boards are pre-paired with one key per pair. Each boot they derive a new session key from it, and every message is sealed end to end with AES-128-GCM and checked against a replay window. Relaying boards can't read what they pass on |
 
 The firmware to build and flash is [`main/`](main/); its
-[README](main/README.md) is a guide from parts and wiring to a first call.
+[README](main/README.md) documents the project: specifications, wiring,
+setting up, use, changing it for other boards, and its limitations.
 [`tested_parts/`](tested_parts/) holds each part tested on its own, and the
 earlier handset builds that led to `main/`.
 
@@ -77,6 +78,7 @@ INF2004-SE19/
     ├── handset_broadcast_integration_test/ handset_espnow_mesh_integration_test plus voice and text to every board at once
     ├── handset_espmesh_autoroot_integration_test/ newest build without flood/routed relay; ESP-MESH root elected automatically
     ├── four_board_espmesh_test/ Four-board ESP-MESH relay demo: board 3 the fixed root, plus a keyless sniffer
+    ├── handset_peer_mesh_integration_test/ autoroot build plus the peer mesh: every board a node and router, routes the same both ways
     ├── espmesh_allnodes_test/ ESP-MESH(ALLNODES) kit: two-way routed ESP-NOW paths through any board, plus the keyless sniffer
     ├── handset_espnow_flood_integration_test/ broadcast build cut down to ESP-NOW flood, LoRa and the two broadcasts
     ├── espcam_ov5640_test/   OV5640 camera self-test, live view over the USB cable
@@ -104,10 +106,11 @@ the ESP-NOW and LoRa broadcasts. Its keys are in
 keep the two the same. Build it with `cd main && pio run -e board1` (environments
 `board1` to `board6`; board 6 was added on 2026-11-24 as an extra relay).
 
-Start with the [guide in `main/README.md`](main/README.md#guide-from-parts-to-a-first-call):
-what you need, the wiring table, the board table, flashing, a first call
-step by step, and what to check when something goes wrong. It builds and
-passes its host tests; it has not been run on hardware yet.
+Start with [`main/README.md`](main/README.md#setting-up): the parts, the
+wiring table, the board table, flashing, a first call step by step, how to
+change the configuration for other boards, and what to check when
+something goes wrong. It builds and passes its host tests; no measurements
+have been recorded on hardware yet.
 
 ## Hardware
 
@@ -204,6 +207,7 @@ its [README](esp32_s3n16r8_template/README.md).
 | [handset_broadcast_integration_test](tested_parts/handset_broadcast_integration_test/) | handset_espnow_mesh_integration_test plus broadcast to every board at once, no connection: ESP-NOW push-to-talk voice and "Hello all", LoRa "Hello all" / "Bye all", sealed under each sender's broadcast key; all five environments build; ran on boards 1–4 on 2026-11-06 for the `radio_sniffer` capture (sessions, presence pings and broadcast voice all opened, 0 bad tags); its own hardware test steps not yet run |
 | [handset_espmesh_autoroot_integration_test](tested_parts/handset_espmesh_autoroot_integration_test/) | handset_broadcast_integration_test without the ESP-NOW flood mesh and routed relay; ESP-MESH is the only mesh and its root is elected over ESP-NOW presence pings (idle board first, then the one hearing the most boards, then lowest ID), so an unused board in the middle relays; all five environments build, host tests pass (`root_election` suite); not yet hardware-tested (`tools/mesh_test.py` ready, with an `elect` test) |
 | [four_board_espmesh_test](tested_parts/four_board_espmesh_test/) | Four-board ESP-MESH relay demo converted from the Arduino kit: handsets 1 and 2 join board 3, the fixed root, and a keyless sniffer captures both hops; all four environments build; the mesh run through board 3 and the sniffer capture are not yet done on hardware |
+| [handset_peer_mesh_integration_test](tested_parts/handset_peer_mesh_integration_test/) | handset_espmesh_autoroot_integration_test plus the peer mesh: every board a node and a router over ESP-NOW, link-state routes that are the same both ways (1 > 4 > 5 and back 5 > 4 > 1), relays reroute frames in flight, no root and no router; all five environments build, host tests pass (`peer_mesh` suite, 300 random topologies); not yet hardware-tested |
 | [espmesh_allnodes_test](tested_parts/espmesh_allnodes_test/) | ESP-MESH(ALLNODES) kit: handset_espnow_mesh_integration_test with the routed relay reworked so a call keeps one confirmed path in both directions, any board relaying over ESP-NOW; sixth environment is a keyless sniffer that follows each relayed frame hop by hop on its serial monitor; board MACs as handset_peer_mesh_integration_test; all six environments build; not yet hardware-tested |
 | [handset_espnow_flood_integration_test](tested_parts/handset_espnow_flood_integration_test/) | handset_broadcast_integration_test cut down to four things on the menu (ESP-NOW flood mesh, LoRa, Broadcast, LoRa broadcast) plus Status and Tools; ESP-MESH and the routed relay are not started; flood relays wait a random 0–20 ms and tell copies by the hop tag instead of the unauthenticated envelope ID; all five environments build, host tests pass (`relay_frame` suite); not yet hardware-tested |
 | [mictospeaker_test](tested_parts/mictospeaker_test/) | Live audio streams between boards; packet gaps and mic noise remain |
