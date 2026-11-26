@@ -54,6 +54,69 @@ struct relay_net
 };
 
 relay_net flood_net("FLOOD", via::flood, flood_calls);
+
+// Where a relayed frame spends its time on this board, since the last
+// TIMING line: in the receive queue until the loop takes it, and from the
+// radio's receive callback until it is handed back to the radio (the
+// random wait included). radio::take_send_timing() has the rest.
+struct relay_timing
+{
+    uint32_t taken = 0;  // Flood frames the loop took.
+    uint32_t queued_total_us = 0;
+    uint32_t queued_max_us = 0;
+    uint32_t passed = 0;  // Frames handed to the radio to pass on.
+    uint32_t passed_slow = 0;  // Later than radio::slow_send_us.
+    uint32_t passed_total_us = 0;
+    uint32_t passed_max_us = 0;
+};
+relay_timing relay_times;
+
+void note_relay_passed(int64_t received_us)
+{
+    const uint32_t waited = elapsed_us(received_us);
+    ++relay_times.passed;
+    relay_times.passed_total_us += waited;
+    relay_times.passed_slow += waited > radio::slow_send_us ? 1 : 0;
+    relay_times.passed_max_us = waited > relay_times.passed_max_us ? waited :
+        relay_times.passed_max_us;
+}
+
+// TIMING line: with the Status lines every 10 s (`reset`), and after the
+// `flood` line (the 10 s so far).
+void print_timing(bool reset)
+{
+    const relay_timing &t = relay_times;
+    const radio::send_timing sent = radio::take_send_timing(reset);
+    const radio::send_kind_timing &b = sent.broadcast;
+    const radio::send_kind_timing &u = sent.addressed;
+    Serial.printf("TIMING | flood frames in queue %.1f ms avg, %lu max | "
+                  "passed on after %.1f ms avg, %lu max, %lu of %lu over "
+                  "%lu ms",
+        t.taken ? t.queued_total_us / 1000.0 / t.taken : 0.0,
+        static_cast<unsigned long>(t.queued_max_us / 1000),
+        t.passed ? t.passed_total_us / 1000.0 / t.passed : 0.0,
+        static_cast<unsigned long>(t.passed_max_us / 1000),
+        static_cast<unsigned long>(t.passed_slow),
+        static_cast<unsigned long>(t.passed),
+        static_cast<unsigned long>(radio::slow_send_us / 1000));
+    Serial.printf(" | radio sent broadcasts after %.1f ms avg, %lu max, %lu "
+                  "of %lu slow | addressed after %.1f ms avg, %lu max, %lu "
+                  "of %lu slow, %lu unacknowledged | %lu waiting at most\n",
+        b.frames ? b.total_us / 1000.0 / b.frames : 0.0,
+        static_cast<unsigned long>(b.max_us / 1000),
+        static_cast<unsigned long>(b.slow),
+        static_cast<unsigned long>(b.frames),
+        u.frames ? u.total_us / 1000.0 / u.frames : 0.0,
+        static_cast<unsigned long>(u.max_us / 1000),
+        static_cast<unsigned long>(u.slow),
+        static_cast<unsigned long>(u.frames),
+        static_cast<unsigned long>(sent.unacknowledged),
+        static_cast<unsigned long>(sent.waiting_max));
+    if (reset)
+    {
+        relay_times = {};
+    }
+}
 uint32_t relay_blocked = 0;  // Bit N: ignore relayed frames from board N.
 uint32_t relay_muted_tx = 0;
 uint32_t relay_muted_rx = 0;
@@ -77,6 +140,11 @@ bool relay_peer_online(uint8_t peer, uint32_t now)
     const relay_peer &state = flood_net.peers[peer];
     return state.link.established() &&
         within_presence(state.last_accept_ms, now);
+}
+
+bool relay_came_relayed(uint8_t peer)
+{
+    return flood_net.peers[peer].heard_length > 1;  // Origin, then relays.
 }
 
 void relay_reject(relay_net &net, const radio::received_frame &frame,
@@ -226,6 +294,7 @@ struct relay_pending
 {
     bool used = false;
     uint32_t due_ms = 0;
+    int64_t received_us = 0;  // When the radio received it (TIMING).
     size_t size = 0;
     uint8_t bytes[secure_message::max_frame_size];
 };
@@ -233,7 +302,8 @@ relay_pending relay_queue[app_config::relay_queue_depth];
 
 // Keeps a flood frame to pass on for a random time; false if it must go
 // now (no waiting configured, or the queue is full).
-bool relay_hold(const relay_frame::envelope &head, uint32_t now)
+bool relay_hold(const relay_frame::envelope &head, uint32_t now,
+    int64_t received_us)
 {
     if (app_config::relay_jitter_ms == 0)
     {
@@ -251,6 +321,7 @@ bool relay_hold(const relay_frame::envelope &head, uint32_t now)
             return false;  // relay_transmit() counts the error.
         }
         slot.used = true;
+        slot.received_us = received_us;
         slot.due_ms = now + esp_random() % (app_config::relay_jitter_ms + 1);
         return true;
     }
@@ -266,23 +337,30 @@ void service_relay_queue(uint32_t now)
         {
             continue;
         }
-        slot.used = false;
         if (flood_net.muted)
         {
+            slot.used = false;
             ++relay_muted_tx;  // Muted while it waited.
+            continue;
         }
-        else if (any_connected())
+        if (any_connected())
         {
+            slot.used = false;
             ++flood_net.busy_drops;  // This board connected while it waited.
+            continue;
         }
-        else if (radio::send(radio::broadcast_mac, slot.bytes, slot.size) ==
-            ESP_OK)
+        const esp_err_t result = radio::send(radio::broadcast_mac, slot.bytes,
+            slot.size);
+        if (radio_full(result) &&
+            now - slot.due_ms < app_config::relay_full_wait_ms)
         {
-            ++flood_net.relayed;
+            continue;  // The radio's queue is full: again next pass.
         }
-        else
+        slot.used = false;
+        ++(result == ESP_OK ? flood_net.relayed : flood_net.send_errors);
+        if (result == ESP_OK)
         {
-            ++flood_net.send_errors;
+            note_relay_passed(slot.received_us);
         }
     }
 }
@@ -292,7 +370,8 @@ void service_relay_queue(uint32_t now)
 // time is for that connection. One only asking or asked still relays
 // (any_connected()). Frames addressed to it are always taken
 // (relay_deliver()).
-void relay_forward(relay_net &net, relay_frame::envelope head, uint32_t now)
+void relay_forward(relay_net &net, relay_frame::envelope head, uint32_t now,
+    int64_t received_us)
 {
     if (any_connected())
     {
@@ -304,12 +383,15 @@ void relay_forward(relay_net &net, relay_frame::envelope head, uint32_t now)
         ++net.hop_drops;
         return;
     }
-    if (relay_hold(head, now))
+    if (relay_hold(head, now, received_us))
     {
         return;  // service_relay_queue() sends it.
     }
-    relay_transmit(net, radio::broadcast_mac, head, head.inner,
-        head.inner_size, true);
+    if (relay_transmit(net, radio::broadcast_mac, head, head.inner,
+            head.inner_size, true) == ESP_OK)
+    {
+        note_relay_passed(received_us);
+    }
 }
 
 // A flood frame (true; taken here), else false: handle() takes it as a
@@ -321,6 +403,11 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
         return false;
     }
     relay_net &net = flood_net;
+    const uint32_t queued = elapsed_us(frame.received_us);
+    ++relay_times.taken;
+    relay_times.queued_total_us += queued;
+    relay_times.queued_max_us = queued > relay_times.queued_max_us ? queued :
+        relay_times.queued_max_us;
     const uint8_t sender = relay_board_of(frame.mac);
     if (relay_is_blocked(sender))
     {
@@ -392,7 +479,7 @@ bool relay_handle(const radio::received_frame &frame, uint32_t now)
     }
     else
     {
-        relay_forward(net, head, now);
+        relay_forward(net, head, now, frame.received_us);
     }
     return true;
 }
@@ -470,8 +557,7 @@ void send_control_via(via link, uint8_t destination,
         relay_send_control(flood_net, destination, content);
         return;
     }
-    send_control(control_frame::type_session, destination,
-        radio::find_device(destination)->mac, content);
+    send_control(control_frame::type_session, destination, content);
 }
 
 // Why `peer` looks gone over `link` (it didn't reboot): for the log line
@@ -654,6 +740,7 @@ bool run_relay_command(const char *line, uint32_t now)
         if (*rest == '\0')
         {
             print_relay(net);
+            print_timing(false);
             return true;
         }
         if (strcmp(rest, " mute on") == 0 || strcmp(rest, " mute off") == 0)

@@ -630,14 +630,14 @@ def test_lora_out_of_espnow():
     check(bool(B1.wait(r"LINK refused: 2 is offline", 2, s1)),
           "ESP-NOW connect refused: offline")
     if not check(lora_connect(B1, B2), "LoRa connects while ESP-NOW is out"):
-        B2.send("radio 11 1")
+        B2.send("radio 6 1")
         return
     s2 = B2.mark()
     B1.press("up")
     check(bool(B2.wait(r'LORA TEXT from 1 .*"Hello from Board 1"', 5, s2)),
           "LoRa Hello arrives")
     s1 = B1.mark()
-    B2.send("radio 11 1")
+    B2.send("radio 6 1")
     check(bool(B1.wait(r"PEER 2 \(Board 2\) online", 12, s1)),
           "ESP-NOW back: board 2 online again")
     screen, _ = B1.ui()
@@ -664,7 +664,7 @@ def test_esp_loss_lora_up():
     m = B1.wait(r"^LINK disconnected from 2 .*", 12, s1)
     check(bool(m), f"board 1 drops ESP-NOW after {time.monotonic() - t0:.1f} "
                    f"s ({m.group(0)[30:80] if m else 'none'})")
-    B2.send("radio 11 1")
+    B2.send("radio 6 1")
     time.sleep(1)
     wait_idle(B1, B2)
     check(lora_connect(B1, B2), "LoRa connect right after, same sessions")

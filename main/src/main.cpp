@@ -98,6 +98,9 @@ uint32_t last_accept_ms = 0;
 uint32_t accepted_count = 0;
 uint32_t rejected_count = 0;
 uint32_t own_id_claims = 0;
+// Direct frames for another board, sent to the broadcast address because
+// that board didn't acknowledge (radio::send_to).
+uint32_t for_others = 0;
 
 char command[command_capacity] = {};
 size_t command_length = 0;
@@ -156,7 +159,7 @@ status build_control(uint32_t &sequence, uint8_t type, uint8_t destination,
         capacity, size);
 }
 
-void send_control(uint8_t type, uint8_t destination, const uint8_t *mac,
+void send_control(uint8_t type, uint8_t destination,
     const control_frame::message &content)
 {
     uint8_t frame[secure_message::max_frame_size];
@@ -169,7 +172,7 @@ void send_control(uint8_t type, uint8_t destination, const uint8_t *mac,
             secure_message::status_name(built));
         return;
     }
-    radio::send(mac, frame, size);
+    radio::send_to(destination, frame, size);
 }
 
 // A frame dropped, counted in `count` and logged with `prefix` ("FLOOD ").
@@ -201,7 +204,7 @@ void handle_session(const radio::received_frame &frame,
 {
     if (fields.destination != own_id)
     {
-        reject(frame, "not addressed to this device");
+        ++for_others;
         return;
     }
     const char *problem = take_session(via::espnow, fields.source, content,
@@ -237,6 +240,11 @@ void handle(const radio::received_frame &frame, uint32_t now)
     {
         reject(frame, "unknown source ID");
         return;
+    }
+    const device *sender = radio::find_device(frame.mac);
+    if (sender && sender->id == fields.source)
+    {
+        radio::heard(fields.source);  // In range: its own address again.
     }
     if (control_frame::is_control(fields.type))
     {
@@ -383,12 +391,14 @@ void read_commands(uint32_t now)
 void print_status()
 {
     Serial.printf("Status | accepted %lu | rejected %lu | queue drops %lu | "
-                  "unknown MAC drops %lu | own ID claims %lu | sessions",
+                  "unknown MAC drops %lu | own ID claims %lu | for others %lu "
+                  "| sessions",
         static_cast<unsigned long>(accepted_count),
         static_cast<unsigned long>(rejected_count),
         static_cast<unsigned long>(radio::queue_drops()),
         static_cast<unsigned long>(radio::unknown_drops()),
-        static_cast<unsigned long>(own_id_claims));
+        static_cast<unsigned long>(own_id_claims),
+        static_cast<unsigned long>(for_others));
     for (uint8_t peer = 1; peer <= max_id; ++peer)
     {
         if (!valid_peer(peer))
@@ -549,6 +559,7 @@ void loop()
         last_status_ms = now;
         print_status();
         print_relay(flood_net);
+        print_timing(true);
         print_lora();
     }
     delay(1);

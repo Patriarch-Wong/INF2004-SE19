@@ -5,8 +5,9 @@
 
 namespace network_config
 {
-// Channel 11, as stage 6, the relay voice test and both broadcast tests.
-constexpr uint8_t channel = 11;
+// Channel 6. The tested_parts projects (stage 6, the relay voice test, both
+// broadcast tests) and the radio sniffer's default are channel 11.
+constexpr uint8_t channel = 6;
 // ESP-NOW PHY rate, fixed at boot (TRACKING.md S2: one mechanism). Direct
 // unicast at 1 Mbps delivered 3,000/3,000 frames in stage 6; `radio CH
 // MBPS` changes it until the next reset.

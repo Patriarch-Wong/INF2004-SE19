@@ -27,7 +27,87 @@ std::atomic<uint32_t> dropped_full{0};
 std::atomic<uint32_t> dropped_unknown{0};
 std::atomic<uint32_t> ack_failures[network_config::device_count + 1];
 std::atomic<uint32_t> ack_ok_ms[network_config::device_count + 1];
+// Heard since its last unacknowledged frame: try its own address once more.
+std::atomic<bool> heard_again[network_config::device_count + 1];
 uint8_t own_mac[6] = {};
+
+// Send times of the frames ESP-NOW has not reported sent yet, oldest
+// first: it reports them in the order they were handed over. Written by
+// the loop (sent_tail), read by the Wi-Fi task (sent_head).
+constexpr uint32_t sent_ring_size = 128;
+struct sent_entry
+{
+    int64_t at_us;
+    bool broadcast;
+};
+sent_entry sent_ring[sent_ring_size] = {};
+std::atomic<uint32_t> sent_head{0};
+std::atomic<uint32_t> sent_tail{0};
+struct kind_counters
+{
+    std::atomic<uint32_t> frames{0};
+    std::atomic<uint32_t> slow{0};
+    std::atomic<uint32_t> total_us{0};
+    std::atomic<uint32_t> max_us{0};
+};
+kind_counters timing_broadcast;
+kind_counters timing_addressed;
+std::atomic<uint32_t> timing_unacknowledged{0};
+std::atomic<uint32_t> timing_waiting_max{0};
+
+void raise(std::atomic<uint32_t> &slot, uint32_t value)
+{
+    if (value > slot.load())
+    {
+        slot.store(value);
+    }
+}
+
+// A frame was reported sent: the oldest one waiting.
+void note_sent(bool acknowledged)
+{
+    const uint32_t head = sent_head.load();
+    if (head == sent_tail.load())
+    {
+        return;
+    }
+    const sent_entry entry = sent_ring[head % sent_ring_size];
+    const uint32_t waited = static_cast<uint32_t>(
+        esp_timer_get_time() - entry.at_us);
+    sent_head.store(head + 1);
+    kind_counters &kind = entry.broadcast ? timing_broadcast :
+        timing_addressed;
+    kind.frames.fetch_add(1);
+    kind.total_us.fetch_add(waited);
+    kind.slow.fetch_add(waited > slow_send_us ? 1 : 0);
+    raise(kind.max_us, waited);
+    if (!entry.broadcast && !acknowledged)
+    {
+        timing_unacknowledged.fetch_add(1);
+    }
+}
+
+// Hands a frame to ESP-NOW, noting when.
+esp_err_t transmit(const uint8_t *mac, const uint8_t *frame, size_t size)
+{
+    const uint32_t tail = sent_tail.load();
+    const bool timed = tail - sent_head.load() < sent_ring_size;
+    if (timed)
+    {
+        // Before the send: its callback can come at once.
+        sent_ring[tail % sent_ring_size] = {esp_timer_get_time(),
+            memcmp(mac, broadcast_mac, 6) == 0};
+        sent_tail.store(tail + 1);
+        raise(timing_waiting_max, tail + 1 - sent_head.load());
+    }
+    const esp_err_t result = esp_now_send(mac, frame, size);
+    if (timed && result != ESP_OK)
+    {
+        sent_tail.store(tail);  // Not taken: no callback will come for it.
+    }
+    return result;
+}
+
 unsigned current_rate = network_config::rate_mbps;
 
 bool zero_mac(const uint8_t *mac)
@@ -66,6 +146,7 @@ void on_receive(const uint8_t *mac, const uint8_t *data, int length)
 // failed every retry.
 void on_sent(const uint8_t *mac, esp_now_send_status_t status)
 {
+    note_sent(status == ESP_NOW_SEND_SUCCESS);
     const device *peer = mac ? find_device(mac) : nullptr;
     if (!peer || peer->id > network_config::device_count)
     {
@@ -305,7 +386,34 @@ unsigned rate_mbps()
 
 esp_err_t send(const uint8_t *mac, const uint8_t *frame, size_t size)
 {
-    return esp_now_send(mac, frame, size);
+    return transmit(mac, frame, size);
+}
+
+esp_err_t send_to(uint8_t id, const uint8_t *frame, size_t size)
+{
+    const device *peer = find_device(id);
+    if (!peer || id > network_config::device_count)
+    {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (ack_failures[id].load() == 0 || heard_again[id].exchange(false))
+    {
+        return transmit(peer->mac, frame, size);
+    }
+    const esp_err_t result = transmit(broadcast_mac, frame, size);
+    if (result == ESP_OK)
+    {
+        ack_failures[id].fetch_add(1);  // Sent, and still unacknowledged.
+    }
+    return result;
+}
+
+void heard(uint8_t id)
+{
+    if (id <= network_config::device_count)
+    {
+        heard_again[id].store(true);
+    }
 }
 
 ack_state acks(uint8_t id)
@@ -315,6 +423,35 @@ ack_state acks(uint8_t id)
         return {0, 0};
     }
     return {ack_failures[id].load(), ack_ok_ms[id].load()};
+}
+
+send_kind_timing take_kind(kind_counters &kind, bool reset)
+{
+    const send_kind_timing now = {kind.frames.load(), kind.slow.load(),
+        kind.total_us.load(), kind.max_us.load()};
+    if (reset)
+    {
+        kind.frames.store(0);
+        kind.slow.store(0);
+        kind.total_us.store(0);
+        kind.max_us.store(0);
+    }
+    return now;
+}
+
+send_timing take_send_timing(bool reset)
+{
+    send_timing now = {};
+    now.broadcast = take_kind(timing_broadcast, reset);
+    now.addressed = take_kind(timing_addressed, reset);
+    now.unacknowledged = timing_unacknowledged.load();
+    now.waiting_max = timing_waiting_max.load();
+    if (reset)
+    {
+        timing_unacknowledged.store(0);
+        timing_waiting_max.store(0);
+    }
+    return now;
 }
 
 uint32_t queue_drops()

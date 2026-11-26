@@ -150,9 +150,12 @@ constexpr uint32_t presence_timeout_ms = 6500;
 
 // Boards that don't answer are tried less often (ISSUES.md B1). The radio
 // retries every frame to an absent board, and voice frames wait behind
-// those retries. A board that boots sends hellos itself, and the lower ID
-// answers a hello with its own at once, so a reboot is still found within
-// about a second.
+// those retries: measured 2026-11-26, a call lost 10-50 frames at each
+// 15 s hello to two boards that were off. So after one unacknowledged
+// frame the next ones to that board go to the broadcast address, which is
+// never retried (radio::send_to). A board that boots sends hellos itself,
+// and the lower ID answers a hello with its own at once, so a reboot is
+// still found within about a second.
 constexpr uint32_t session_fast_hellos = 10;  // At session_retry_ms.
 constexpr uint32_t session_slow_retry_ms = 15000;
 constexpr uint32_t presence_offline_ping_ms = 5000;
@@ -278,6 +281,11 @@ constexpr uint32_t relay_seen_window_ms = 5000;
 constexpr uint32_t relay_jitter_ms = 20;
 // Frames that can wait their turn at once; one more is passed on at once.
 constexpr size_t relay_queue_depth = 12;
+// A held frame the radio has no room for (its queue is full, as while it
+// retries a frame to a board out of range) is tried again each loop pass
+// for this long, then dropped. The frame arrives late, not never: well
+// inside the playout buffer.
+constexpr uint32_t relay_full_wait_ms = 40;
 // Voice over the flood mesh asks again for a missing frame after this long,
 // not nack_retry_us. A NACK and the frame sent again each wait at every
 // relay, so across two relays the answer can take 80 ms; asking again at
@@ -285,6 +293,14 @@ constexpr size_t relay_queue_depth = 12;
 // the frame, just when frames are being lost. Still three tries inside the
 // default playout buffer.
 constexpr uint32_t relay_nack_retry_us = 100000;
+// Playout buffer for a stream that comes through a relay, in place of
+// playout_default_ms. Each hop loses packets (about one in ten on a desk,
+// measured 2026-11-26), and a NACK and its answer each cross every hop,
+// so one try in three fails and at 300 ms the second answer is too late:
+// 500 frames through one relay lost 17-67 at 300 ms, 3-9 at 600 ms and
+// none at 1000 ms. 800 ms lets all nack_max_tries count. `buffer MS`
+// sets both until the next reset.
+constexpr uint32_t relay_playout_ms = 800;
 // Flood voice sends every other frame, carrying the one before it: 25
 // packets a second instead of 50, so half the airtime
 // with every relay counted. Each frame then goes once, so a lost packet

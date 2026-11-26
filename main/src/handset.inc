@@ -50,6 +50,8 @@ enum class via : uint8_t
 // Settings, changed by commands. peer_id follows the connection.
 uint8_t peer_id = own_id == 1 ? 2 : 1;
 uint32_t playout_ms = app_config::playout_default_ms;
+// For a stream that came through a relay (app_config).
+uint32_t relay_playout_ms = app_config::relay_playout_ms;
 bool redundancy = app_config::redundancy_default;
 bool flood_pair = app_config::flood_pair_default;
 bool mic_report = false;
@@ -109,6 +111,7 @@ via rx_via = via::espnow;
 bool rx_test = false;
 uint32_t rx_last_ms = 0;
 uint32_t rx_started_ms = 0;
+uint32_t rx_buffer_ms = 0;  // The playout buffer of the stream coming in.
 uint32_t rx_finished_stream = 0;
 uint32_t rx_underruns_before = 0;
 uint32_t rx_busy_drops = 0;
@@ -209,6 +212,8 @@ bool lora_in_use()
 // The flood mesh's sending side, and the path a connection to `peer` takes
 // over it ("finding..." while not known) (relay.inc).
 bool relay_peer_online(uint8_t peer, uint32_t now);
+// The last flood frame from `peer` passed at least one relay.
+bool relay_came_relayed(uint8_t peer);
 esp_err_t relay_send_payload(uint8_t peer, const uint8_t *payload,
     size_t size, uint8_t type);
 void relay_route_text(uint8_t peer, uint32_t now, char *text,
@@ -423,7 +428,7 @@ esp_err_t send_payload(uint8_t peer, const uint8_t *payload, size_t size,
     {
         return ESP_FAIL;
     }
-    return radio::send(radio::find_device(peer)->mac, frame, frame_size);
+    return radio::send_to(peer, frame, frame_size);
 }
 
 // Each transport's connection machine and names, in `via` order, so the
@@ -1170,7 +1175,11 @@ void on_voice(via link, uint8_t source, const uint8_t *payload, size_t size,
             rx_end_seen = false;
             rx_started_ms = now;
             rx_underruns_before = speaker::stats().underruns;
-            int64_t play_at = now_us + playout_ms * 1000ll - playout_lead_us;
+            // Through a relay, lost frames take longer to get back.
+            rx_buffer_ms = link == via::flood && relay_came_relayed(source) ?
+                relay_playout_ms : playout_ms;
+            int64_t play_at = now_us + rx_buffer_ms * 1000ll -
+                playout_lead_us;
             play_at = play_at > now_us ? play_at : now_us;
             rx_generation.fetch_add(1);
             rx_play_at_us.store(play_at);
@@ -1215,7 +1224,7 @@ void on_voice(via link, uint8_t source, const uint8_t *payload, size_t size,
                       "source=%s via=%s\n",
             static_cast<unsigned long>(frame.stream_id), source,
             static_cast<unsigned long>(frame.sequence),
-            static_cast<unsigned long>(playout_ms),
+            static_cast<unsigned long>(rx_buffer_ms),
             rx_test ? "test" : "mic", way(link).name);
         if (unmuted)
         {
@@ -1518,7 +1527,7 @@ void handle_data(const radio::received_frame &frame,
     }
     if (fields.destination != own_id)
     {
-        reject(frame, "not addressed to this device");
+        ++for_others;
         return;
     }
     const int64_t arrival = esp_timer_get_time();
@@ -2135,8 +2144,9 @@ bool run_handset_command(const char *line, uint32_t now)
     {
         if (value >= 60 && value <= 1000)
         {
-            playout_ms = value;
-            Serial.printf("BUFFER %u ms (next stream)\n", value);
+            playout_ms = relay_playout_ms = value;
+            Serial.printf("BUFFER %u ms (next stream, relayed or not)\n",
+                value);
         }
         else
         {

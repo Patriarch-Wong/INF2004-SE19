@@ -97,6 +97,11 @@ void test_flood_limits()
     check(3 * (relay_nack_retry_us / 1000) <= playout_default_ms,
         "a missing frame can be asked for three times inside the playout "
         "buffer");
+    check(relay_playout_ms >= playout_default_ms && relay_playout_ms <= 1000,
+        "a relayed stream waits at least as long as a direct one, and no "
+        "longer than `buffer` allows");
+    check(nack_max_tries * (relay_nack_retry_us / 1000) <= relay_playout_ms,
+        "every try for a missing frame fits in the relayed playout buffer");
     check(presence_timeout_ms > 3 * presence_ping_ms,
         "three missed pings pass before a board shows offline");
 }
